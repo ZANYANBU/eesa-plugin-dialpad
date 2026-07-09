@@ -1,0 +1,35 @@
+{
+  "manifestVersion": "1.0",
+  "slug": "dialpad",
+  "name": "Dialpad",
+  "version": "1.0.0",
+  "description": "Dialpad cloud phone system as agent tools — call history, transcripts, users, contacts, offices, departments, phone numbers, and SMS. Read-first; send_sms is the single write.",
+  "icon": "https://cdn.eesa.ai/icons/dialpad.png",
+  "hostedBy": "self",
+  "developer": { "name": "ZANYANBU", "email": "team@eesa.ai" },
+  "auth": { "verify": "eesa-jwks", "gatewayOnly": true },
+  "scopes": ["dialpad:read", "dialpad:write"],
+  "surfaces": {
+    "mcp": {
+      "endpoint": "https://dialpad.plugins.bibekpoudel.com/mcp",
+      "transport": "streamable-http",
+      "tools": [
+        { "name": "list_users", "description": "List Dialpad users (name, email, office, on-duty / online status). Optionally filter by email." },
+        { "name": "get_user", "description": "Get one Dialpad user's full details by user id." },
+        { "name": "list_calls", "description": "List recent call records (call history). Filter by time window or a target user/office/department id." },
+        { "name": "get_call", "description": "Get the full details of a single call by call id." },
+        { "name": "get_call_transcript", "description": "Get the transcript of a call by call id (when transcription is enabled)." },
+        { "name": "list_offices", "description": "List the offices in the Dialpad company." },
+        { "name": "list_departments", "description": "List the departments (groups) in the Dialpad company." },
+        { "name": "list_contacts", "description": "List contacts in the Dialpad company address book." },
+        { "name": "list_phone_numbers", "description": "List the phone numbers provisioned in the Dialpad company." },
+        { "name": "send_sms", "description": "Send an SMS from a Dialpad user to one or more numbers. WRITE action — gate with approval in Eesa RBAC." }
+      ]
+    }
+  },
+  "entitlementKey": "dialpad",
+  "roles": [
+    { "key": "admin", "label": "Dialpad Admin", "description": "Query calls, transcripts, users and directory; send SMS." },
+    { "key": "viewer", "label": "Viewer", "description": "Read-only: calls, transcripts, users and directory." }
+  ]
+}
