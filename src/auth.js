@@ -16,34 +16,42 @@ export class AuthError extends Error {
   }
 }
 
-// Prove the request really came from Eesa. Preferred: HMAC signature over
-// `${timestamp}.${rawBody}` (Stripe-style) keyed with MCP_SIGNING_SECRET.
-// Fallback: the shared X-Eesa-Gateway-Secret. If NEITHER secret is configured,
-// we're in local dev and allow it (log a warning at startup instead).
+// Prove the request really came from Eesa. Accept EITHER proof:
+//   1) X-Eesa-Gateway-Secret — what the publishing pipeline (deploy / tool sync /
+//      integrity test) and the default gateway-only agent path send. Injected
+//      automatically as PLUGIN_GATEWAY_SECRET.
+//   2) HMAC signature over `${timestamp}.${rawBody}` (Stripe-style) keyed with
+//      MCP_SIGNING_SECRET — used when the marketplace connection has a signing
+//      secret (per-tenant credential calls). Verified only when present.
+// If NEITHER secret is configured, we're in local dev and allow it.
 export function verifyInbound(rawBody, req) {
+  // 1) Gateway-secret proof.
+  if (GATEWAY_SECRET && req.get('X-Eesa-Gateway-Secret') === GATEWAY_SECRET) return;
+
+  // 2) HMAC signature (when the platform signs).
   if (SIGNING_SECRET) {
     const ts = req.get('X-Mcp-Timestamp');
     const sig = req.get('X-Mcp-Signature') || '';
-    if (!ts || !sig.startsWith('sha256=')) throw new AuthError('missing or malformed signature');
-    const tsInt = Number(ts);
-    if (!Number.isFinite(tsInt) || Math.abs(Date.now() / 1000 - tsInt) > MAX_AGE_SECONDS) {
-      throw new AuthError('timestamp outside replay window');
+    if (ts && sig.startsWith('sha256=')) {
+      const tsInt = Number(ts);
+      if (!Number.isFinite(tsInt) || Math.abs(Date.now() / 1000 - tsInt) > MAX_AGE_SECONDS) {
+        throw new AuthError('timestamp outside replay window');
+      }
+      const expected =
+        'sha256=' +
+        crypto.createHmac('sha256', SIGNING_SECRET).update(`${ts}.${rawBody.toString('utf8')}`).digest('hex');
+      const a = Buffer.from(expected);
+      const b = Buffer.from(sig);
+      if (a.length === b.length && crypto.timingSafeEqual(a, b)) return;
+      throw new AuthError('bad signature');
     }
-    const expected =
-      'sha256=' +
-      crypto.createHmac('sha256', SIGNING_SECRET).update(`${ts}.${rawBody.toString('utf8')}`).digest('hex');
-    const a = Buffer.from(expected);
-    const b = Buffer.from(sig);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new AuthError('bad signature');
-    return;
   }
-  if (GATEWAY_SECRET) {
-    if (req.get('X-Eesa-Gateway-Secret') !== GATEWAY_SECRET) {
-      throw new AuthError('gateway secret missing or invalid', 403);
-    }
-    return;
-  }
-  // No secret configured → local dev. verifyInbound is a no-op.
+
+  // 3) No inbound secret configured at all → local dev, allow.
+  if (!GATEWAY_SECRET && !SIGNING_SECRET) return;
+
+  // A secret is configured but the request carried no valid proof.
+  throw new AuthError('missing gateway secret or signature');
 }
 
 // Pull the calling tenant + its per-tenant credentials from the X-Mcp-Tenant-*
