@@ -3,14 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Eesa Dialpad plugin — call history, transcripts, users, contacts, and SMS as MCP agent tools.",
+  "description": "Eesa Dialpad plugin — per-tenant call history, transcripts, users, contacts, and SMS as MCP agent tools.",
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node src/server.js",
     "check": "node --check src/server.js && node --check src/auth.js && node --check src/dialpad.js && node --check src/mcp.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "jose": "^5.9.0"
+    "express": "^4.19.2"
   }
 }

@@ -3,12 +3,32 @@
   "slug": "dialpad",
   "name": "Dialpad",
   "version": "1.0.0",
-  "description": "Dialpad cloud phone system as agent tools — call history, transcripts, users, contacts, offices, departments, phone numbers, and SMS. Read-first; send_sms is the single write.",
+  "description": "Dialpad cloud phone system as agent tools — call history, transcripts, users, contacts, offices, departments, phone numbers, and SMS. Multi-tenant: each workspace connects its own Dialpad API key. Read-first; send_sms is the single write.",
   "icon": "https://cdn.eesa.ai/icons/dialpad.png",
   "hostedBy": "self",
   "developer": { "name": "ZANYANBU", "email": "team@eesa.ai" },
-  "auth": { "verify": "eesa-jwks", "gatewayOnly": true },
+  "auth": { "verify": "mcp-signature", "signingSecretEnv": "MCP_SIGNING_SECRET", "gatewayOnly": true },
   "scopes": ["dialpad:read", "dialpad:write"],
+  "tenantConfig": {
+    "description": "Per-tenant credentials each workspace enters when it subscribes. The platform stores them on the tenant's Subscription and forwards them per-request as X-Mcp-Tenant-Cred-<Field> headers (api_key -> X-Mcp-Tenant-Cred-Api-Key). Nothing is shared across tenants.",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "api_key": {
+          "type": "string",
+          "title": "Dialpad API key",
+          "secret": true,
+          "description": "Company API key from Dialpad → Admin Settings → Company Settings → API keys. Auth is Authorization: Bearer <key>."
+        },
+        "api_base": {
+          "type": "string",
+          "title": "Dialpad API base URL",
+          "description": "Optional. Defaults to https://dialpad.com/api/v2."
+        }
+      },
+      "required": ["api_key"]
+    }
+  },
   "surfaces": {
     "mcp": {
       "endpoint": "https://dialpad.plugins.bibekpoudel.com/mcp",

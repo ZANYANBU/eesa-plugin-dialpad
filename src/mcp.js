@@ -1,7 +1,8 @@
-// Dialpad MCP surface — the agent tools. Pure JSON-RPC logic; the HTTP/auth
-// envelope lives in server.js. Every tool maps onto the Dialpad REST client.
-// Reads are the core; send_sms is the single write (gate it in Eesa RBAC).
-import { dp, page } from './dialpad.js';
+// Dialpad MCP surface — the agent tools. Each tools/call builds a Dialpad
+// client from the CALLING tenant's credentials (passed in as `dp`) so one
+// tenant can never see another's Dialpad data. Reads are the core; send_sms is
+// the single write.
+import { dialpadClient, page } from './dialpad.js';
 
 const PROTOCOL = '2025-06-18';
 
@@ -43,7 +44,7 @@ const TOOLS = [
         limit: { type: 'integer', description: 'Max users to return (default 25).' },
       },
     },
-    run: async (a) => page(await dp.get('/users', { email: a.email, limit: a.limit || 25 }), asUser),
+    run: async (a, dp) => page(await dp.get('/users', { email: a.email, limit: a.limit || 25 }), asUser),
   },
   {
     name: 'get_user',
@@ -53,7 +54,7 @@ const TOOLS = [
       properties: { user_id: { type: 'string', description: 'Dialpad user id.' } },
       required: ['user_id'],
     },
-    run: async (a) => asUser(await dp.get(`/users/${encodeURIComponent(a.user_id)}`)),
+    run: async (a, dp) => asUser(await dp.get(`/users/${encodeURIComponent(a.user_id)}`)),
   },
   {
     name: 'list_calls',
@@ -68,7 +69,7 @@ const TOOLS = [
         target_type: { type: 'string', description: 'Type of target_id: user | office | department | callcenter.' },
       },
     },
-    run: async (a) =>
+    run: async (a, dp) =>
       page(
         await dp.get('/calls', {
           limit: a.limit || 25,
@@ -88,7 +89,7 @@ const TOOLS = [
       properties: { call_id: { type: 'string', description: 'Dialpad call id.' } },
       required: ['call_id'],
     },
-    run: async (a) => await dp.get(`/calls/${encodeURIComponent(a.call_id)}`),
+    run: async (a, dp) => await dp.get(`/calls/${encodeURIComponent(a.call_id)}`),
   },
   {
     name: 'get_call_transcript',
@@ -98,19 +99,19 @@ const TOOLS = [
       properties: { call_id: { type: 'string', description: 'Dialpad call id.' } },
       required: ['call_id'],
     },
-    run: async (a) => await dp.get(`/transcripts/${encodeURIComponent(a.call_id)}`),
+    run: async (a, dp) => await dp.get(`/transcripts/${encodeURIComponent(a.call_id)}`),
   },
   {
     name: 'list_offices',
     description: 'List the offices in the Dialpad company.',
     inputSchema: { type: 'object', properties: { limit: { type: 'integer' } } },
-    run: async (a) => page(await dp.get('/offices', { limit: a.limit || 50 })),
+    run: async (a, dp) => page(await dp.get('/offices', { limit: a.limit || 50 })),
   },
   {
     name: 'list_departments',
     description: 'List the departments (groups) in the Dialpad company.',
     inputSchema: { type: 'object', properties: { limit: { type: 'integer' } } },
-    run: async (a) => page(await dp.get('/departments', { limit: a.limit || 50 })),
+    run: async (a, dp) => page(await dp.get('/departments', { limit: a.limit || 50 })),
   },
   {
     name: 'list_contacts',
@@ -122,13 +123,13 @@ const TOOLS = [
         owner_id: { type: 'string', description: 'Restrict to a specific owner user id.' },
       },
     },
-    run: async (a) => page(await dp.get('/contacts', { limit: a.limit || 25, owner_id: a.owner_id })),
+    run: async (a, dp) => page(await dp.get('/contacts', { limit: a.limit || 25, owner_id: a.owner_id })),
   },
   {
     name: 'list_phone_numbers',
     description: 'List the phone numbers provisioned in the Dialpad company.',
     inputSchema: { type: 'object', properties: { limit: { type: 'integer' } } },
-    run: async (a) => page(await dp.get('/numbers', { limit: a.limit || 50 })),
+    run: async (a, dp) => page(await dp.get('/numbers', { limit: a.limit || 50 })),
   },
   {
     name: 'send_sms',
@@ -139,11 +140,11 @@ const TOOLS = [
         user_id: { type: 'string', description: 'Dialpad user id the SMS is sent from.' },
         to_numbers: { type: 'array', items: { type: 'string' }, description: 'Recipient numbers in E.164 (e.g. +14155551234).' },
         text: { type: 'string', description: 'Message body.' },
-        from_number: { type: 'string', description: "Optional specific sending number owned by the user." },
+        from_number: { type: 'string', description: 'Optional specific sending number owned by the user.' },
       },
       required: ['user_id', 'to_numbers', 'text'],
     },
-    run: async (a) =>
+    run: async (a, dp) =>
       await dp.post('/sms/send', {
         user_id: a.user_id,
         to_numbers: a.to_numbers,
@@ -154,10 +155,9 @@ const TOOLS = [
 ];
 
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
-// tools/list must not leak the run() implementation to the client.
 const LISTED = TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
 
-export async function handleRpc(body, ctx, serverInfo) {
+export async function handleRpc(body, tenant, serverInfo) {
   const { method, params = {} } = body;
   if (method === 'initialize') {
     return { protocolVersion: PROTOCOL, capabilities: { tools: {} }, serverInfo };
@@ -172,7 +172,10 @@ export async function handleRpc(body, ctx, serverInfo) {
       throw err;
     }
     try {
-      const result = await tool.run(params.arguments || {}, ctx);
+      // Build the client from the CALLING tenant's own Dialpad key. Throws
+      // NO_CREDENTIALS (surfaced as isError) if the tenant hasn't connected.
+      const dp = dialpadClient({ apiKey: tenant?.creds?.api_key, apiBase: tenant?.creds?.api_base });
+      const result = await tool.run(params.arguments || {}, dp);
       const text = typeof result === 'string' ? result : JSON.stringify(result);
       return { content: [{ type: 'text', text }], isError: false };
     } catch (e) {

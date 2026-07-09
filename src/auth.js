@@ -1,17 +1,13 @@
-// Dialpad plugin auth — verify Eesa RS256 tokens via JWKS (jose) + the
-// gateway-only shared-secret check. Same trust model as every Eesa plugin:
-// the platform mints a short-lived token with audience = this plugin's slug,
-// and the gateway attaches X-Eesa-Gateway-Secret. Both are injected by the
-// platform — you never set the JWKS URL / issuer / gateway secret yourself.
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+// Dialpad plugin auth — the Eesa marketplace MCP contract
+// (docs/setup/mcp-server-implementation.md). Each tenant brings their OWN
+// Dialpad key: the platform forwards it per-request as X-Mcp-Tenant-Cred-*
+// headers, signed with an HMAC (X-Mcp-Signature). We verify the signature and
+// read the calling tenant's key from the header — there is NO shared global key.
+import crypto from 'crypto';
 
-const AUDIENCE = process.env.PLUGIN_SLUG || 'dialpad';
-const ISSUER = process.env.EESA_TOKEN_ISSUER || 'eesa';
+const SIGNING_SECRET = process.env.MCP_SIGNING_SECRET || '';
 const GATEWAY_SECRET = process.env.PLUGIN_GATEWAY_SECRET || '';
-
-const JWKS = createRemoteJWKSet(
-  new URL(process.env.EESA_JWKS_URL || 'https://eesa.ai/.well-known/jwks.json'),
-);
+const MAX_AGE_SECONDS = 300; // 5-minute replay window
 
 export class AuthError extends Error {
   constructor(message, status = 401) {
@@ -20,39 +16,50 @@ export class AuthError extends Error {
   }
 }
 
-// Verify the incoming Eesa token (RS256, checked against the platform JWKS).
-// Returns the caller context (tenant + user) the tools run as.
-export async function verifyToken(authHeader) {
-  if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
-    throw new AuthError('missing bearer token');
+// Prove the request really came from Eesa. Preferred: HMAC signature over
+// `${timestamp}.${rawBody}` (Stripe-style) keyed with MCP_SIGNING_SECRET.
+// Fallback: the shared X-Eesa-Gateway-Secret. If NEITHER secret is configured,
+// we're in local dev and allow it (log a warning at startup instead).
+export function verifyInbound(rawBody, req) {
+  if (SIGNING_SECRET) {
+    const ts = req.get('X-Mcp-Timestamp');
+    const sig = req.get('X-Mcp-Signature') || '';
+    if (!ts || !sig.startsWith('sha256=')) throw new AuthError('missing or malformed signature');
+    const tsInt = Number(ts);
+    if (!Number.isFinite(tsInt) || Math.abs(Date.now() / 1000 - tsInt) > MAX_AGE_SECONDS) {
+      throw new AuthError('timestamp outside replay window');
+    }
+    const expected =
+      'sha256=' +
+      crypto.createHmac('sha256', SIGNING_SECRET).update(`${ts}.${rawBody.toString('utf8')}`).digest('hex');
+    const a = Buffer.from(expected);
+    const b = Buffer.from(sig);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new AuthError('bad signature');
+    return;
   }
-  const token = authHeader.slice(7).trim();
-  let payload;
-  try {
-    ({ payload } = await jwtVerify(token, JWKS, { issuer: ISSUER, audience: AUDIENCE }));
-  } catch (e) {
-    throw new AuthError('token verification failed: ' + e.message);
+  if (GATEWAY_SECRET) {
+    if (req.get('X-Eesa-Gateway-Secret') !== GATEWAY_SECRET) {
+      throw new AuthError('gateway secret missing or invalid', 403);
+    }
+    return;
   }
-  const tenantId = payload.tenantId || payload.tenant_id;
-  if (!tenantId) throw new AuthError('token missing tenantId');
-  return {
-    sub: String(payload.sub || ''),
-    tenantId: String(tenantId),
-    scopes: payload.scopes || [],
-    surface: payload.surface || 'mcp',
-    email: payload.email || '',
-    role: payload.role || '',
-    raw: payload,
-  };
+  // No secret configured → local dev. verifyInbound is a no-op.
 }
 
-// Gateway-only guard: the MCP surface is reachable only through the Eesa
-// gateway, which attaches the shared secret. If PLUGIN_GATEWAY_SECRET is unset
-// (local dev), the check is skipped.
-export function requireGateway(req) {
-  if (!GATEWAY_SECRET) return;
-  const got = req.get('X-Eesa-Gateway-Secret');
-  if (!got || got !== GATEWAY_SECRET) {
-    throw new AuthError('gateway secret missing or invalid', 403);
+// Pull the calling tenant + its per-tenant credentials from the X-Mcp-Tenant-*
+// headers. Returns { tenantId, creds } where creds mirrors the tenant's
+// Subscription configuration — e.g. { api_key, api_base }. NEVER log creds.
+export function extractTenant(req) {
+  const tenantId = req.get('X-Mcp-Tenant-Id') || null;
+  const creds = {};
+  for (const [k, v] of Object.entries(req.headers)) {
+    // Express lower-cases header names: x-mcp-tenant-cred-api-key -> api_key
+    if (k.startsWith('x-mcp-tenant-cred-')) {
+      const field = k.slice('x-mcp-tenant-cred-'.length).replace(/-/g, '_');
+      creds[field] = Array.isArray(v) ? v[0] : v;
+    }
   }
+  return { tenantId, creds };
 }
+
+export const authConfigured = Boolean(SIGNING_SECRET || GATEWAY_SECRET);
