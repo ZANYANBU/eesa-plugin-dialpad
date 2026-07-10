@@ -17,7 +17,12 @@ export function dialpadClient({ apiKey, apiBase } = {}) {
   async function request(method, path, { query, body } = {}) {
     const url = new URL(base + path);
     for (const [k, v] of Object.entries(query || {})) {
-      if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));
+      if (v === undefined || v === null || v === '') continue;
+      if (Array.isArray(v)) {
+        for (const item of v) if (item !== undefined && item !== null && item !== '') url.searchParams.append(k, String(item));
+      } else {
+        url.searchParams.set(k, String(v));
+      }
     }
     let res;
     try {
