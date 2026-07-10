@@ -2,13 +2,23 @@
   "manifestVersion": "1.0",
   "slug": "dialpad",
   "name": "Dialpad",
-  "version": "1.0.0",
-  "description": "Dialpad cloud phone system as agent tools — call history, transcripts, users, contacts, offices, departments, phone numbers, and SMS. Multi-tenant: each workspace connects its own Dialpad API key. Read-first; send_sms is the single write.",
+  "version": "1.1.0",
+  "description": "Dialpad cloud phone system as agent tools — 53 tools spanning calls & transcripts & AI recaps, call-center status & operators & callbacks, users, contacts, offices, departments, coaching teams, phone numbers, blocked numbers, dispositions, meetings, analytics/stats/scorecards/WFM, and SMS. Multi-tenant: each workspace connects its own Dialpad API key. Read-first (40 reads); 13 writes are individually flagged WRITE for RBAC gating.",
   "icon": "https://cdn.eesa.ai/icons/dialpad.png",
   "hostedBy": "self",
-  "developer": { "name": "ZANYANBU", "email": "team@eesa.ai" },
-  "auth": { "verify": "mcp-signature", "signingSecretEnv": "MCP_SIGNING_SECRET", "gatewayOnly": true },
-  "scopes": ["dialpad:read", "dialpad:write"],
+  "developer": {
+    "name": "ZANYANBU",
+    "email": "team@eesa.ai"
+  },
+  "auth": {
+    "verify": "mcp-signature",
+    "signingSecretEnv": "MCP_SIGNING_SECRET",
+    "gatewayOnly": true
+  },
+  "scopes": [
+    "dialpad:read",
+    "dialpad:write"
+  ],
   "tenantConfig": {
     "description": "Per-tenant credentials each workspace enters when it subscribes. The platform stores them on the tenant's Subscription and forwards them per-request as X-Mcp-Tenant-Cred-<Field> headers (api_key -> X-Mcp-Tenant-Cred-Api-Key). Nothing is shared across tenants.",
     "schema": {
@@ -26,7 +36,9 @@
           "description": "Optional. Defaults to https://dialpad.com/api/v2."
         }
       },
-      "required": ["api_key"]
+      "required": [
+        "api_key"
+      ]
     }
   },
   "surfaces": {
@@ -34,22 +46,232 @@
       "endpoint": "https://dialpad.plugins.bibekpoudel.com/mcp",
       "transport": "streamable-http",
       "tools": [
-        { "name": "list_users", "description": "List Dialpad users (name, email, office, on-duty / online status). Optionally filter by email." },
-        { "name": "get_user", "description": "Get one Dialpad user's full details by user id." },
-        { "name": "list_calls", "description": "List recent call records (call history). Filter by time window or a target user/office/department id." },
-        { "name": "get_call", "description": "Get the full details of a single call by call id." },
-        { "name": "get_call_transcript", "description": "Get the transcript of a call by call id (when transcription is enabled)." },
-        { "name": "list_offices", "description": "List the offices in the Dialpad company." },
-        { "name": "list_departments", "description": "List the departments (groups) in the Dialpad company." },
-        { "name": "list_contacts", "description": "List contacts in the Dialpad company address book." },
-        { "name": "list_phone_numbers", "description": "List the phone numbers provisioned in the Dialpad company." },
-        { "name": "send_sms", "description": "Send an SMS from a Dialpad user to one or more numbers. WRITE action — gate with approval in Eesa RBAC." }
+        {
+          "name": "list_users",
+          "description": "List Dialpad users (name, email, office, on-duty / online status). Optionally filter by email or state."
+        },
+        {
+          "name": "get_user",
+          "description": "Get one Dialpad user's full details by user id."
+        },
+        {
+          "name": "get_user_caller_ids",
+          "description": "List the caller-ID numbers a user is allowed to present on outbound calls."
+        },
+        {
+          "name": "toggle_user_dnd",
+          "description": "Turn Do-Not-Disturb on or off for a user. WRITE — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "initiate_call",
+          "description": "Ring a Dialpad user's device and place an outbound call to a phone number (click-to-call). WRITE — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "list_calls",
+          "description": "List concluded call records (call history). Filter by time window (unix ms) or a target user/office/department/call-center id."
+        },
+        {
+          "name": "get_call",
+          "description": "Get the full details of a single call by call id."
+        },
+        {
+          "name": "get_call_transcript",
+          "description": "Get the transcript of a call by call id (when transcription is enabled for the workspace)."
+        },
+        {
+          "name": "get_call_ai_recap",
+          "description": "Get the AI recap (summary, action items, purposes) for a call by call id, when Ai is enabled."
+        },
+        {
+          "name": "get_call_operators",
+          "description": "List the operators currently assigned to a live call."
+        },
+        {
+          "name": "add_call_labels",
+          "description": "Attach one or more labels/tags to a call. WRITE — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "hangup_call",
+          "description": "Hang up (end) a live call by call id. WRITE — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "create_call_review_sharelink",
+          "description": "Create a shareable review link for a recorded call. WRITE — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "list_contacts",
+          "description": "List contacts in the Dialpad company address book. Optionally restrict to one owner."
+        },
+        {
+          "name": "get_contact",
+          "description": "Get one contact by contact id."
+        },
+        {
+          "name": "create_contact",
+          "description": "Create a shared/company contact. WRITE — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "update_contact",
+          "description": "Update fields on an existing contact. WRITE — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "delete_contact",
+          "description": "Delete a contact by id. WRITE / destructive — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "list_departments",
+          "description": "List the departments (groups) in the Dialpad company."
+        },
+        {
+          "name": "get_department",
+          "description": "Get one department by id."
+        },
+        {
+          "name": "list_department_operators",
+          "description": "List the operators (agents) assigned to a department."
+        },
+        {
+          "name": "list_offices",
+          "description": "List the offices in the Dialpad company."
+        },
+        {
+          "name": "get_office",
+          "description": "Get one office by id."
+        },
+        {
+          "name": "get_office_plan",
+          "description": "Get the billing plan (licenses purchased / used) for an office."
+        },
+        {
+          "name": "list_office_operators",
+          "description": "List the mainline operators for an office."
+        },
+        {
+          "name": "list_call_centers",
+          "description": "List the call centers (support queues) in the company."
+        },
+        {
+          "name": "get_call_center",
+          "description": "Get one call center by id."
+        },
+        {
+          "name": "get_call_center_status",
+          "description": "Get the live operational status of a call center (queue depth, on-duty agents, wait times)."
+        },
+        {
+          "name": "list_call_center_operators",
+          "description": "List the operators (agents) staffed on a call center."
+        },
+        {
+          "name": "set_operator_duty_status",
+          "description": "Set a call-center agent's on/off-duty status. WRITE — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "list_callbacks",
+          "description": "List queued callbacks for a call center."
+        },
+        {
+          "name": "enqueue_callback",
+          "description": "Request a callback: add a phone number to a call center callback queue. WRITE — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "list_coaching_teams",
+          "description": "List coaching teams (supervisor ↔ agent groupings)."
+        },
+        {
+          "name": "get_coaching_team",
+          "description": "Get one coaching team by id."
+        },
+        {
+          "name": "list_coaching_team_members",
+          "description": "List the members of a coaching team."
+        },
+        {
+          "name": "list_phone_numbers",
+          "description": "List the phone numbers provisioned in the Dialpad company (with assignment targets)."
+        },
+        {
+          "name": "get_phone_number",
+          "description": "Get details for a specific phone number (assignment, office, status)."
+        },
+        {
+          "name": "format_phone_number",
+          "description": "Normalise / validate a phone number into E.164 and local formats for a country."
+        },
+        {
+          "name": "list_rooms",
+          "description": "List Dialpad rooms (shared spaces / desk-phone rooms) in an office."
+        },
+        {
+          "name": "list_channels",
+          "description": "List messaging channels in the company."
+        },
+        {
+          "name": "list_blocked_numbers",
+          "description": "List numbers blocked company-wide from calling/texting in."
+        },
+        {
+          "name": "block_number",
+          "description": "Block one or more inbound numbers company-wide. WRITE — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "unblock_number",
+          "description": "Remove one or more numbers from the company block list. WRITE — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "list_dispositions",
+          "description": "List call dispositions (outcome codes) configured for the company."
+        },
+        {
+          "name": "get_company",
+          "description": "Get the Dialpad company profile (name, plan, admin, domains)."
+        },
+        {
+          "name": "list_sms_opt_outs",
+          "description": "List numbers that have opted out of SMS from the company (compliance / do-not-text list)."
+        },
+        {
+          "name": "list_meetings",
+          "description": "List Dialpad Meetings."
+        },
+        {
+          "name": "list_scheduled_messages",
+          "description": "List SMS messages scheduled to send in the future."
+        },
+        {
+          "name": "send_sms",
+          "description": "Send an SMS text message from a Dialpad user to one or more numbers. WRITE — gate with approval in Eesa RBAC."
+        },
+        {
+          "name": "request_call_stats",
+          "description": "Kick off an async analytics export (call/text volume, durations, etc.) over a day range. Returns a request_id — then poll get_stats_result until it is ready."
+        },
+        {
+          "name": "get_stats_result",
+          "description": "Fetch the result of a previously requested analytics export by its request_id (from request_call_stats)."
+        },
+        {
+          "name": "list_scorecards",
+          "description": "List QA scorecards configured for the company (agent call scoring rubrics)."
+        },
+        {
+          "name": "get_wfm_agent_metrics",
+          "description": "Get workforce-management agent metrics (adherence, occupancy, productivity) over a day range."
+        }
       ]
     }
   },
   "entitlementKey": "dialpad",
   "roles": [
-    { "key": "admin", "label": "Dialpad Admin", "description": "Query calls, transcripts, users and directory; send SMS." },
-    { "key": "viewer", "label": "Viewer", "description": "Read-only: calls, transcripts, users and directory." }
+    {
+      "key": "admin",
+      "label": "Dialpad Admin",
+      "description": "Full access: query calls, transcripts, analytics and the whole directory, plus the write actions (send SMS, place/hang up calls, edit contacts, block numbers, set agent duty status, request callbacks)."
+    },
+    {
+      "key": "viewer",
+      "label": "Viewer",
+      "description": "Read-only: calls, transcripts, AI recaps, analytics, users, contacts, offices, departments, call centers and phone numbers. No write actions."
+    }
   ]
 }

@@ -48,12 +48,38 @@ export function dialpadClient({ apiKey, apiBase } = {}) {
   return {
     get: (path, query) => request('GET', path, { query }),
     post: (path, body, query) => request('POST', path, { body, query }),
+    patch: (path, body, query) => request('PATCH', path, { body, query }),
+    del: (path, query) => request('DELETE', path, { query }),
   };
 }
 
-// List endpoints return { cursor, items }. Normalise to a compact page.
+// Dialpad list endpoints return { cursor, items }; a few older ones use a
+// resource-named array. Normalise any of them to a compact { count, cursor,
+// items } page and, when a mapper is given, project each row to the fields an
+// agent actually reasons over.
 export function page(json, mapper) {
-  const items = json.items || json.users || json.contacts || json.calls || [];
+  const items = Array.isArray(json)
+    ? json
+    : json.items ||
+      json.users ||
+      json.contacts ||
+      json.calls ||
+      json.offices ||
+      json.departments ||
+      json.call_centers ||
+      json.coaching_teams ||
+      json.rooms ||
+      json.channels ||
+      json.meetings ||
+      json.numbers ||
+      json.operators ||
+      json.members ||
+      json.callbacks ||
+      json.dispositions ||
+      json.blocked_numbers ||
+      json.schedules ||
+      json.scorecards ||
+      [];
   return {
     count: items.length,
     cursor: json.cursor || null,
