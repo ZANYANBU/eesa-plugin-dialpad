@@ -29,20 +29,72 @@ builds a Dialpad client bound to that one key for the duration of the request.
 
 ## Tools
 
-| Tool | Kind | Dialpad endpoint |
-|---|---|---|
-| `list_users` | read | `GET /users` |
-| `get_user` | read | `GET /users/{id}` |
-| `list_calls` | read | `GET /calls` |
-| `get_call` | read | `GET /calls/{id}` |
-| `get_call_transcript` | read | `GET /transcripts/{call_id}` |
-| `list_offices` | read | `GET /offices` |
-| `list_departments` | read | `GET /departments` |
-| `list_contacts` | read | `GET /contacts` |
-| `list_phone_numbers` | read | `GET /numbers` |
-| `send_sms` | **write** | `POST /sms/send` |
+**53 tools** — 40 reads + 13 writes. Every write is flagged `WRITE` in its
+description so it can be gated behind approval in Eesa RBAC. Grouped by resource:
+
+| Resource | Tool | Kind | Dialpad endpoint |
+|---|---|---|---|
+| Users | `list_users` | read | `GET /users` |
+| | `get_user` | read | `GET /users/{id}` |
+| | `get_user_caller_ids` | read | `GET /users/{id}/caller_id` |
+| | `toggle_user_dnd` | **write** | `PATCH /users/{id}/toggle_dnd` |
+| | `initiate_call` | **write** | `POST /users/{id}/initiate_call` |
+| Calls | `list_calls` | read | `GET /calls` |
+| | `get_call` | read | `GET /calls/{id}` |
+| | `get_call_transcript` | read | `GET /transcripts/{id}` |
+| | `get_call_ai_recap` | read | `GET /calls/{id}/ai_recap` |
+| | `get_call_operators` | read | `GET /calls/{id}/assigned_operators` |
+| | `add_call_labels` | **write** | `POST /calls/{id}/labels` |
+| | `hangup_call` | **write** | `POST /calls/{id}/actions/hangup` |
+| | `create_call_review_sharelink` | **write** | `POST /calls/{id}/review_sharelink` |
+| Contacts | `list_contacts` | read | `GET /contacts` |
+| | `get_contact` | read | `GET /contacts/{id}` |
+| | `create_contact` | **write** | `POST /contacts` |
+| | `update_contact` | **write** | `PATCH /contacts/{id}` |
+| | `delete_contact` | **write** | `DELETE /contacts/{id}` |
+| Departments | `list_departments` | read | `GET /departments` |
+| | `get_department` | read | `GET /departments/{id}` |
+| | `list_department_operators` | read | `GET /departments/{id}/operators` |
+| Offices | `list_offices` | read | `GET /offices` |
+| | `get_office` | read | `GET /offices/{id}` |
+| | `get_office_plan` | read | `GET /offices/{id}/plan` |
+| | `list_office_operators` | read | `GET /offices/{id}/operators` |
+| Call centers | `list_call_centers` | read | `GET /call_centers` |
+| | `get_call_center` | read | `GET /call_centers/{id}` |
+| | `get_call_center_status` | read | `GET /call_centers/{id}/status` |
+| | `list_call_center_operators` | read | `GET /call_centers/{id}/operators` |
+| | `set_operator_duty_status` | **write** | `PATCH /call_centers/{id}/operators/{uid}/duty_status` |
+| | `list_callbacks` | read | `GET /call_centers/{id}/callbacks` |
+| | `enqueue_callback` | **write** | `POST /call_centers/{id}/callbacks` |
+| Coaching teams | `list_coaching_teams` | read | `GET /coaching_teams` |
+| | `get_coaching_team` | read | `GET /coaching_teams/{id}` |
+| | `list_coaching_team_members` | read | `GET /coaching_teams/{id}/members` |
+| Phone numbers | `list_phone_numbers` | read | `GET /numbers` |
+| | `get_phone_number` | read | `GET /numbers/{number}` |
+| | `format_phone_number` | read | `POST /phone/format` |
+| Rooms / channels | `list_rooms` | read | `GET /rooms` |
+| | `list_channels` | read | `GET /channels` |
+| Blocked / dispositions | `list_blocked_numbers` | read | `GET /blocked_numbers` |
+| | `block_number` | **write** | `POST /blocked_numbers/add` |
+| | `unblock_number` | **write** | `POST /blocked_numbers/remove` |
+| | `list_dispositions` | read | `GET /dispositions` |
+| Company / meetings | `get_company` | read | `GET /company` |
+| | `list_sms_opt_outs` | read | `GET /company/sms_opt_out` |
+| | `list_meetings` | read | `GET /meetings` |
+| | `list_scheduled_messages` | read | `GET /schedules` |
+| SMS | `send_sms` | **write** | `POST /sms/send` |
+| Analytics | `request_call_stats` | read | `POST /stats` |
+| | `get_stats_result` | read | `GET /stats/{request_id}` |
+| | `list_scorecards` | read | `GET /scorecards` |
+| | `get_wfm_agent_metrics` | read | `GET /wfm/metrics/agent` |
 
 Dialpad base URL: `https://dialpad.com/api/v2` · auth `Authorization: Bearer <key>`.
+Analytics is async: `request_call_stats` returns a `request_id`; poll
+`get_stats_result` until the export is ready.
+
+Not exposed (intentionally): pure integration/config surfaces — webhooks, event
+subscriptions, websockets, OAuth, access-control policies — and destructive admin
+ops (delete user/office/department). They are not agent-appropriate.
 
 ## Env (what the *service* needs — NOT the Dialpad key)
 
@@ -103,4 +155,7 @@ on every call.
   unsigned requests.
 - Use HTTPS end-to-end; treat the signing secret like any other secret (rotate,
   store in a secret manager).
-- `send_sms` is the only write — gate it behind approval in Eesa RBAC.
+- The 13 writes (SMS, place/hang-up calls, contact CRUD, block/unblock numbers,
+  agent duty status, DND, callbacks, call labels/sharelinks) each carry `WRITE`
+  in their description — gate them behind approval in Eesa RBAC. All 40 read
+  tools are side-effect-free.

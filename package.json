@@ -1,9 +1,9 @@
 {
   "name": "eesa-plugin-dialpad",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "Eesa Dialpad plugin — per-tenant call history, transcripts, users, contacts, and SMS as MCP agent tools.",
+  "description": "Eesa Dialpad plugin — per-tenant Dialpad phone system (calls, transcripts, AI recaps, call centers, contacts, directory, analytics, SMS) as MCP agent tools.",
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node src/server.js",
