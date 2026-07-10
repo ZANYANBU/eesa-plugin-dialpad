@@ -1,13 +1,14 @@
 {
   "name": "eesa-plugin-dialpad",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Eesa Dialpad plugin — per-tenant Dialpad phone system (calls, transcripts, AI recaps, call centers, contacts, directory, analytics, SMS) as MCP agent tools.",
+  "description": "Eesa Dialpad plugin — the complete READ-ONLY surface of the official Dialpad Platform API v1.0 (every GET endpoint) as per-tenant MCP agent tools.",
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/auth.js && node --check src/dialpad.js && node --check src/mcp.js"
+    "gen": "node scripts/generate-tools.mjs",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/dialpad.js && node --check src/mcp.js && node --check src/tools.generated.js"
   },
   "dependencies": {
     "express": "^4.19.2"

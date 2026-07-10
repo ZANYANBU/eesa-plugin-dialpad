@@ -1,9 +1,14 @@
-# Dialpad — Eesa federated plugin (multi-tenant)
+# Dialpad — Eesa federated plugin (multi-tenant, read-only)
 
 A standalone Node service that exposes the **Dialpad** cloud phone system to the
 Eesa AI agent as MCP tools. Stateless — no database. **Multi-tenant by design:**
 every workspace connects its *own* Dialpad API key; the platform forwards that
 key per-request, so one tenant can never see another's Dialpad data.
+
+**The tool surface is the spec.** Every tool is one **GET (read-only)** operation
+from the official **Dialpad Platform API v1.0** OpenAPI spec — **102 tools**,
+generated, not hand-picked. There are **no writes**: nothing this plugin does can
+mutate a Dialpad workspace.
 
 | Surface | Route | Auth | Caller |
 |---|---|---|---|
@@ -27,74 +32,48 @@ The plugin verifies the signature, reads the tenant's key from the header, and
 builds a Dialpad client bound to that one key for the duration of the request.
 **Nothing is persisted or logged.** There is **no global Dialpad key.**
 
-## Tools
+## Tools — the complete read surface (102)
 
-**53 tools** — 40 reads + 13 writes. Every write is flagged `WRITE` in its
-description so it can be gated behind approval in Eesa RBAC. Grouped by resource:
+Generated from [`spec/dialpad-openapi.json`](./spec/dialpad-openapi.json) by
+[`scripts/generate-tools.mjs`](./scripts/generate-tools.mjs) into
+[`src/tools.generated.js`](./src/tools.generated.js). Tool names are the spec's
+`operationId` (e.g. `call.get_call_info` → `call_get_call_info`); each tool's
+inputs are the operation's path + query parameters, straight from the spec.
 
-| Resource | Tool | Kind | Dialpad endpoint |
+Coverage by Dialpad resource:
+
+| Resource | Tools | Resource | Tools |
 |---|---|---|---|
-| Users | `list_users` | read | `GET /users` |
-| | `get_user` | read | `GET /users/{id}` |
-| | `get_user_caller_ids` | read | `GET /users/{id}/caller_id` |
-| | `toggle_user_dnd` | **write** | `PATCH /users/{id}/toggle_dnd` |
-| | `initiate_call` | **write** | `POST /users/{id}/initiate_call` |
-| Calls | `list_calls` | read | `GET /calls` |
-| | `get_call` | read | `GET /calls/{id}` |
-| | `get_call_transcript` | read | `GET /transcripts/{id}` |
-| | `get_call_ai_recap` | read | `GET /calls/{id}/ai_recap` |
-| | `get_call_operators` | read | `GET /calls/{id}/assigned_operators` |
-| | `add_call_labels` | **write** | `POST /calls/{id}/labels` |
-| | `hangup_call` | **write** | `POST /calls/{id}/actions/hangup` |
-| | `create_call_review_sharelink` | **write** | `POST /calls/{id}/review_sharelink` |
-| Contacts | `list_contacts` | read | `GET /contacts` |
-| | `get_contact` | read | `GET /contacts/{id}` |
-| | `create_contact` | **write** | `POST /contacts` |
-| | `update_contact` | **write** | `PATCH /contacts/{id}` |
-| | `delete_contact` | **write** | `DELETE /contacts/{id}` |
-| Departments | `list_departments` | read | `GET /departments` |
-| | `get_department` | read | `GET /departments/{id}` |
-| | `list_department_operators` | read | `GET /departments/{id}/operators` |
-| Offices | `list_offices` | read | `GET /offices` |
-| | `get_office` | read | `GET /offices/{id}` |
-| | `get_office_plan` | read | `GET /offices/{id}/plan` |
-| | `list_office_operators` | read | `GET /offices/{id}/operators` |
-| Call centers | `list_call_centers` | read | `GET /call_centers` |
-| | `get_call_center` | read | `GET /call_centers/{id}` |
-| | `get_call_center_status` | read | `GET /call_centers/{id}/status` |
-| | `list_call_center_operators` | read | `GET /call_centers/{id}/operators` |
-| | `set_operator_duty_status` | **write** | `PATCH /call_centers/{id}/operators/{uid}/duty_status` |
-| | `list_callbacks` | read | `GET /call_centers/{id}/callbacks` |
-| | `enqueue_callback` | **write** | `POST /call_centers/{id}/callbacks` |
-| Coaching teams | `list_coaching_teams` | read | `GET /coaching_teams` |
-| | `get_coaching_team` | read | `GET /coaching_teams/{id}` |
-| | `list_coaching_team_members` | read | `GET /coaching_teams/{id}/members` |
-| Phone numbers | `list_phone_numbers` | read | `GET /numbers` |
-| | `get_phone_number` | read | `GET /numbers/{number}` |
-| | `format_phone_number` | read | `POST /phone/format` |
-| Rooms / channels | `list_rooms` | read | `GET /rooms` |
-| | `list_channels` | read | `GET /channels` |
-| Blocked / dispositions | `list_blocked_numbers` | read | `GET /blocked_numbers` |
-| | `block_number` | **write** | `POST /blocked_numbers/add` |
-| | `unblock_number` | **write** | `POST /blocked_numbers/remove` |
-| | `list_dispositions` | read | `GET /dispositions` |
-| Company / meetings | `get_company` | read | `GET /company` |
-| | `list_sms_opt_outs` | read | `GET /company/sms_opt_out` |
-| | `list_meetings` | read | `GET /meetings` |
-| | `list_scheduled_messages` | read | `GET /schedules` |
-| SMS | `send_sms` | **write** | `POST /sms/send` |
-| Analytics | `request_call_stats` | read | `POST /stats` |
-| | `get_stats_result` | read | `GET /stats/{request_id}` |
-| | `list_scorecards` | read | `GET /scorecards` |
-| | `get_wfm_agent_metrics` | read | `GET /wfm/metrics/agent` |
+| offices | 11 | rooms | 4 |
+| subscriptions (event) | 14 | channels | 3 |
+| users | 7 | coaching teams | 3 |
+| call centers | 6 | scorecards | 3 |
+| call | 4 | access-control policies | 3 |
+| message | 4 | departments | 3 |
+| numbers · contacts · transcripts | 2 each | blocked numbers · dispositions | 2 each |
+| meetings · conference · company | 2 each | webhooks · websockets · wfm | 2 each |
+| user devices · call routers · schedule reports | 2 each | stats · digital · agent-groups | 1 each |
+| callback · call labels · custom IVRs | 1 each | recording/review sharelinks · app settings | 1 each |
+
+The full authoritative list (name + description) is in
+[`manifest.json`](./manifest.json) under `surfaces.mcp.tools`.
 
 Dialpad base URL: `https://dialpad.com/api/v2` · auth `Authorization: Bearer <key>`.
-Analytics is async: `request_call_stats` returns a `request_id`; poll
-`get_stats_result` until the export is ready.
 
-Not exposed (intentionally): pure integration/config surfaces — webhooks, event
-subscriptions, websockets, OAuth, access-control policies — and destructive admin
-ops (delete user/office/department). They are not agent-appropriate.
+**Regenerating** (when Dialpad publishes a new spec):
+
+```bash
+curl -sL https://dialpad.com/static/openapi/platform-v1.0.json -o spec/dialpad-openapi.json
+npm run gen        # rewrites src/tools.generated.js + manifest.json tool list
+npm run check      # syntax-compile everything
+```
+
+### Not included: writes
+
+By design this plugin is **read-only** — POST/PUT/PATCH/DELETE operations
+(send SMS, place/hang-up calls, create/edit/delete contacts, block numbers,
+etc.) are **not** generated. If a specific write is needed later it can be added
+as an explicitly-flagged tool and gated behind approval in Eesa RBAC.
 
 ## Env (what the *service* needs — NOT the Dialpad key)
 
@@ -125,7 +104,8 @@ if `MCP_SIGNING_SECRET` is set).
 Dockerfile app → container port **8080** → env `MCP_SIGNING_SECRET` (and/or the
 platform-injected `PLUGIN_GATEWAY_SECRET`) → domain
 **`dialpad.plugins.bibekpoudel.com`** (TLS auto) → restrict inbound to the Eesa
-platform.
+platform. Coolify does not auto-deploy on git push unless a webhook / Automatic
+Deployment is enabled — otherwise click **Redeploy** after merging.
 
 ## Onboard in Eesa (Admin → Publishing)
 
@@ -146,7 +126,8 @@ Then, so tenants can connect their own key, the marketplace Product for this
 plugin must expose the `tenantConfig` fields (`api_key`, optional `api_base`).
 A tenant admin **purchases the Dialpad integration and enters their Dialpad API
 key** in the setup form; the platform forwards it as `X-Mcp-Tenant-Cred-Api-Key`
-on every call.
+on every call. After deploying/updating, **re-run Sync tools** in Eesa so the new
+tool list is discovered.
 
 ## Security notes
 
@@ -155,7 +136,5 @@ on every call.
   unsigned requests.
 - Use HTTPS end-to-end; treat the signing secret like any other secret (rotate,
   store in a secret manager).
-- The 13 writes (SMS, place/hang-up calls, contact CRUD, block/unblock numbers,
-  agent duty status, DND, callbacks, call labels/sharelinks) each carry `WRITE`
-  in their description — gate them behind approval in Eesa RBAC. All 40 read
-  tools are side-effect-free.
+- **Read-only:** the plugin issues only GET requests to Dialpad — it cannot
+  create, modify, or delete anything in a connected workspace.

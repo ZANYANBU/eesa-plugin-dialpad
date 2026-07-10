@@ -2,8 +2,8 @@
   "manifestVersion": "1.0",
   "slug": "dialpad",
   "name": "Dialpad",
-  "version": "1.1.0",
-  "description": "Dialpad cloud phone system as agent tools — 53 tools spanning calls & transcripts & AI recaps, call-center status & operators & callbacks, users, contacts, offices, departments, coaching teams, phone numbers, blocked numbers, dispositions, meetings, analytics/stats/scorecards/WFM, and SMS. Multi-tenant: each workspace connects its own Dialpad API key. Read-first (40 reads); 13 writes are individually flagged WRITE for RBAC gating.",
+  "version": "2.0.0",
+  "description": "Dialpad cloud phone system as agent tools — the complete READ-ONLY surface of the official Dialpad Platform API v1.0 (102 GET endpoints: calls, transcripts, AI recaps, users, contacts, offices, departments, call centers, coaching teams, numbers, rooms, channels, meetings, analytics/stats/scorecards/WFM, and more). Multi-tenant: each workspace connects its own Dialpad API key. No writes.",
   "icon": "https://cdn.eesa.ai/icons/dialpad.png",
   "hostedBy": "self",
   "developer": {
@@ -16,8 +16,7 @@
     "gatewayOnly": true
   },
   "scopes": [
-    "dialpad:read",
-    "dialpad:write"
+    "dialpad:read"
   ],
   "tenantConfig": {
     "description": "Per-tenant credentials each workspace enters when it subscribes. The platform stores them on the tenant's Subscription and forwards them per-request as X-Mcp-Tenant-Cred-<Field> headers (api_key -> X-Mcp-Tenant-Cred-Api-Key). Nothing is shared across tenants.",
@@ -47,216 +46,412 @@
       "transport": "streamable-http",
       "tools": [
         {
-          "name": "list_users",
-          "description": "List Dialpad users (name, email, office, on-duty / online status). Optionally filter by email or state."
+          "name": "accesscontrolpolicies_assignments",
+          "description": "Access Control Policies -- List Assignments [read-only]"
         },
         {
-          "name": "get_user",
-          "description": "Get one Dialpad user's full details by user id."
+          "name": "accesscontrolpolicies_get",
+          "description": "Access Control Policies -- Get [read-only]"
         },
         {
-          "name": "get_user_caller_ids",
-          "description": "List the caller-ID numbers a user is allowed to present on outbound calls."
+          "name": "accesscontrolpolicies_list",
+          "description": "Access Control Policies -- List Policies [read-only]"
         },
         {
-          "name": "toggle_user_dnd",
-          "description": "Turn Do-Not-Disturb on or off for a user. WRITE — gate with approval in Eesa RBAC."
+          "name": "agentgroup_get",
+          "description": "Agent Group -- Get [read-only]"
         },
         {
-          "name": "initiate_call",
-          "description": "Ring a Dialpad user's device and place an outbound call to a phone number (click-to-call). WRITE — gate with approval in Eesa RBAC."
+          "name": "app_settings_get",
+          "description": "App Settings -- Get [read-only]"
         },
         {
-          "name": "list_calls",
-          "description": "List concluded call records (call history). Filter by time window (unix ms) or a target user/office/department/call-center id."
+          "name": "blockednumbers_get",
+          "description": "Blocked Number -- Get [read-only]"
         },
         {
-          "name": "get_call",
-          "description": "Get the full details of a single call by call id."
+          "name": "blockednumbers_list",
+          "description": "Blocked Numbers -- List [read-only]"
         },
         {
-          "name": "get_call_transcript",
-          "description": "Get the transcript of a call by call id (when transcription is enabled for the workspace)."
+          "name": "call_list_callbacks",
+          "description": "Call Back -- List [read-only]"
         },
         {
-          "name": "get_call_ai_recap",
-          "description": "Get the AI recap (summary, action items, purposes) for a call by call id, when Ai is enabled."
+          "name": "call_get_ai_recap",
+          "description": "Call -- Get Ai Recap [read-only]"
         },
         {
-          "name": "get_call_operators",
-          "description": "List the operators currently assigned to a live call."
+          "name": "call_get_assigned_operators",
+          "description": "Call -- Assigned Operators [read-only]"
         },
         {
-          "name": "add_call_labels",
-          "description": "Attach one or more labels/tags to a call. WRITE — gate with approval in Eesa RBAC."
+          "name": "call_get_call_info",
+          "description": "Call -- Get [read-only]"
         },
         {
-          "name": "hangup_call",
-          "description": "Hang up (end) a live call by call id. WRITE — gate with approval in Eesa RBAC."
+          "name": "call_list",
+          "description": "Call -- List [read-only]"
         },
         {
-          "name": "create_call_review_sharelink",
-          "description": "Create a shareable review link for a recorded call. WRITE — gate with approval in Eesa RBAC."
+          "name": "callcenters_get",
+          "description": "Call Centers -- Get [read-only]"
         },
         {
-          "name": "list_contacts",
-          "description": "List contacts in the Dialpad company address book. Optionally restrict to one owner."
+          "name": "callcenters_get_status",
+          "description": "Call Centers -- Status [read-only]"
         },
         {
-          "name": "get_contact",
-          "description": "Get one contact by contact id."
+          "name": "callcenters_listall",
+          "description": "Call Centers -- List [read-only]"
         },
         {
-          "name": "create_contact",
-          "description": "Create a shared/company contact. WRITE — gate with approval in Eesa RBAC."
+          "name": "callcenters_operators_get_duty_status",
+          "description": "Operator -- Get Duty Status [read-only]"
         },
         {
-          "name": "update_contact",
-          "description": "Update fields on an existing contact. WRITE — gate with approval in Eesa RBAC."
+          "name": "callcenters_operators_get_skill_level",
+          "description": "Operator -- Get Skill Level [read-only]"
         },
         {
-          "name": "delete_contact",
-          "description": "Delete a contact by id. WRITE / destructive — gate with approval in Eesa RBAC."
+          "name": "callcenters_operators_list",
+          "description": "Operators -- List [read-only]"
         },
         {
-          "name": "list_departments",
-          "description": "List the departments (groups) in the Dialpad company."
+          "name": "calllabel_list",
+          "description": "Label -- List [read-only]"
         },
         {
-          "name": "get_department",
-          "description": "Get one department by id."
+          "name": "call_review_share_link_get",
+          "description": "Call Review Sharelink -- Get [read-only]"
         },
         {
-          "name": "list_department_operators",
-          "description": "List the operators (agents) assigned to a department."
+          "name": "callrouters_get",
+          "description": "Call Router -- Get [read-only]"
         },
         {
-          "name": "list_offices",
-          "description": "List the offices in the Dialpad company."
+          "name": "callrouters_list",
+          "description": "Call Router -- List [read-only]"
         },
         {
-          "name": "get_office",
-          "description": "Get one office by id."
+          "name": "channels_get",
+          "description": "Channel -- Get [read-only]"
         },
         {
-          "name": "get_office_plan",
-          "description": "Get the billing plan (licenses purchased / used) for an office."
+          "name": "channels_list",
+          "description": "Channel -- List [read-only]"
         },
         {
-          "name": "list_office_operators",
-          "description": "List the mainline operators for an office."
+          "name": "channels_members_list",
+          "description": "Members -- List [read-only]"
         },
         {
-          "name": "list_call_centers",
-          "description": "List the call centers (support queues) in the company."
+          "name": "coaching_team_get",
+          "description": "Coaching Team -- Get [read-only]"
         },
         {
-          "name": "get_call_center",
-          "description": "Get one call center by id."
+          "name": "coaching_team_listall",
+          "description": "Coaching Team -- List [read-only]"
         },
         {
-          "name": "get_call_center_status",
-          "description": "Get the live operational status of a call center (queue depth, on-duty agents, wait times)."
+          "name": "coaching_team_members_get",
+          "description": "Coaching Team -- List Members [read-only]"
         },
         {
-          "name": "list_call_center_operators",
-          "description": "List the operators (agents) staffed on a call center."
+          "name": "company_get",
+          "description": "Company -- Get [read-only]"
         },
         {
-          "name": "set_operator_duty_status",
-          "description": "Set a call-center agent's on/off-duty status. WRITE — gate with approval in Eesa RBAC."
+          "name": "company_sms_opt_out",
+          "description": "Company -- Get SMS Opt-out List [read-only]"
         },
         {
-          "name": "list_callbacks",
-          "description": "List queued callbacks for a call center."
+          "name": "conference_meetings_list",
+          "description": "Meeting Summary -- List [read-only]"
         },
         {
-          "name": "enqueue_callback",
-          "description": "Request a callback: add a phone number to a call center callback queue. WRITE — gate with approval in Eesa RBAC."
+          "name": "conference_rooms_list",
+          "description": "Meeting Room -- List [read-only]"
         },
         {
-          "name": "list_coaching_teams",
-          "description": "List coaching teams (supervisor ↔ agent groupings)."
+          "name": "contacts_get",
+          "description": "Contact -- Get [read-only]"
         },
         {
-          "name": "get_coaching_team",
-          "description": "Get one coaching team by id."
+          "name": "contacts_list",
+          "description": "Contact -- List [read-only]"
         },
         {
-          "name": "list_coaching_team_members",
-          "description": "List the members of a coaching team."
+          "name": "custom_ivrs_get",
+          "description": "Custom IVR -- Get [read-only]"
         },
         {
-          "name": "list_phone_numbers",
-          "description": "List the phone numbers provisioned in the Dialpad company (with assignment targets)."
+          "name": "departments_get",
+          "description": "Department -- Get [read-only]"
         },
         {
-          "name": "get_phone_number",
-          "description": "Get details for a specific phone number (assignment, office, status)."
+          "name": "departments_listall",
+          "description": "Department -- List [read-only]"
         },
         {
-          "name": "format_phone_number",
-          "description": "Normalise / validate a phone number into E.164 and local formats for a country."
+          "name": "departments_operators_get",
+          "description": "Operator -- List [read-only]"
         },
         {
-          "name": "list_rooms",
-          "description": "List Dialpad rooms (shared spaces / desk-phone rooms) in an office."
+          "name": "digital_sessionsdata_list",
+          "description": "Digital -- Sessions -- List [read-only]"
         },
         {
-          "name": "list_channels",
-          "description": "List messaging channels in the company."
+          "name": "dispositions_get",
+          "description": "Dispositions -- Get [read-only]"
         },
         {
-          "name": "list_blocked_numbers",
-          "description": "List numbers blocked company-wide from calling/texting in."
+          "name": "dispositions_list",
+          "description": "Dispositions -- List [read-only]"
         },
         {
-          "name": "block_number",
-          "description": "Block one or more inbound numbers company-wide. WRITE — gate with approval in Eesa RBAC."
+          "name": "meetings_get",
+          "description": "Dialpad Meeting -- Get [read-only]"
         },
         {
-          "name": "unblock_number",
-          "description": "Remove one or more numbers from the company block list. WRITE — gate with approval in Eesa RBAC."
+          "name": "meetings_list",
+          "description": "Dialpad Meeting -- List [read-only]"
         },
         {
-          "name": "list_dispositions",
-          "description": "List call dispositions (outcome codes) configured for the company."
+          "name": "bulk_messages_get",
+          "description": "Bulk Message -- Get [read-only]"
         },
         {
-          "name": "get_company",
-          "description": "Get the Dialpad company profile (name, plan, admin, domains)."
+          "name": "bulk_messages_list",
+          "description": "Bulk Message -- List [read-only]"
         },
         {
-          "name": "list_sms_opt_outs",
-          "description": "List numbers that have opted out of SMS from the company (compliance / do-not-text list)."
+          "name": "schedules_get",
+          "description": "Schedule -- Get [read-only]"
         },
         {
-          "name": "list_meetings",
-          "description": "List Dialpad Meetings."
+          "name": "schedules_list",
+          "description": "Schedule -- List [read-only]"
         },
         {
-          "name": "list_scheduled_messages",
-          "description": "List SMS messages scheduled to send in the future."
+          "name": "numbers_get",
+          "description": "Dialpad Number -- Get [read-only]"
         },
         {
-          "name": "send_sms",
-          "description": "Send an SMS text message from a Dialpad user to one or more numbers. WRITE — gate with approval in Eesa RBAC."
+          "name": "numbers_list",
+          "description": "Dialpad Number -- List [read-only]"
         },
         {
-          "name": "request_call_stats",
-          "description": "Kick off an async analytics export (call/text volume, durations, etc.) over a day range. Returns a request_id — then poll get_stats_result until it is ready."
+          "name": "callcenters_list",
+          "description": "Call Centers -- List [read-only]"
         },
         {
-          "name": "get_stats_result",
-          "description": "Fetch the result of a previously requested analytics export by its request_id (from request_call_stats)."
+          "name": "coaching_team_list",
+          "description": "Coaching Team -- List [read-only]"
         },
         {
-          "name": "list_scorecards",
-          "description": "List QA scorecards configured for the company (agent call scoring rubrics)."
+          "name": "departments_list",
+          "description": "Department -- List [read-only]"
         },
         {
-          "name": "get_wfm_agent_metrics",
-          "description": "Get workforce-management agent metrics (adherence, occupancy, productivity) over a day range."
+          "name": "offices_e911_get",
+          "description": "E911 Address -- Get [read-only]"
+        },
+        {
+          "name": "offices_get",
+          "description": "Office -- Get [read-only]"
+        },
+        {
+          "name": "offices_list",
+          "description": "Office -- List [read-only]"
+        },
+        {
+          "name": "offices_offdutystatuses_get",
+          "description": "Off-Duty Status -- List [read-only]"
+        },
+        {
+          "name": "offices_operators_get",
+          "description": "Operator -- List [read-only]"
+        },
+        {
+          "name": "offices_primary_get",
+          "description": "Office -- Get Primary [read-only]"
+        },
+        {
+          "name": "plan_available_licenses_get",
+          "description": "Licenses -- List Available [read-only]"
+        },
+        {
+          "name": "plan_get",
+          "description": "Billing Plan -- Get [read-only]"
+        },
+        {
+          "name": "recording_share_link_get",
+          "description": "Recording Sharelink -- Get [read-only]"
+        },
+        {
+          "name": "deskphones_rooms_get",
+          "description": "Room Phone -- Get [read-only]"
+        },
+        {
+          "name": "deskphones_rooms_list",
+          "description": "Room Phone -- List [read-only]"
+        },
+        {
+          "name": "rooms_get",
+          "description": "Room -- Get [read-only]"
+        },
+        {
+          "name": "rooms_list",
+          "description": "Room -- List [read-only]"
+        },
+        {
+          "name": "schedule_reports_get",
+          "description": "Schedule reports -- Get [read-only]"
+        },
+        {
+          "name": "schedule_reports_list",
+          "description": "Schedule reports -- List [read-only]"
+        },
+        {
+          "name": "scorecards_export_get",
+          "description": "Scorecards export -- Get Result [read-only]"
+        },
+        {
+          "name": "scorecards_get",
+          "description": "Scorecards -- Get [read-only]"
+        },
+        {
+          "name": "scorecards_list",
+          "description": "Scorecards -- List [read-only]"
+        },
+        {
+          "name": "stats_get",
+          "description": "Stats -- Get Result [read-only]"
+        },
+        {
+          "name": "webhook_agent_status_event_subscription_get",
+          "description": "Agent Status -- Get [read-only]"
+        },
+        {
+          "name": "webhook_agent_status_event_subscription_list",
+          "description": "Agent Status -- List [read-only]"
+        },
+        {
+          "name": "webhook_call_event_subscription_get",
+          "description": "Call Event -- Get [read-only]"
+        },
+        {
+          "name": "webhook_call_event_subscription_list",
+          "description": "Call Event -- List [read-only]"
+        },
+        {
+          "name": "webhook_change_log_event_subscription_get",
+          "description": "Change Log -- Get [read-only]"
+        },
+        {
+          "name": "webhook_change_log_event_subscription_list",
+          "description": "Change Log -- List [read-only]"
+        },
+        {
+          "name": "webhook_channel_event_subscription_get",
+          "description": "Channel Event -- Get [read-only]"
+        },
+        {
+          "name": "webhook_channel_event_subscription_list",
+          "description": "Channel Event -- List [read-only]"
+        },
+        {
+          "name": "webhook_contact_event_subscription_get",
+          "description": "Contact Event -- Get [read-only]"
+        },
+        {
+          "name": "webhook_contact_event_subscription_list",
+          "description": "Contact Event -- List [read-only]"
+        },
+        {
+          "name": "webhook_fax_event_subscription_get",
+          "description": "Fax Event -- Get [read-only]"
+        },
+        {
+          "name": "webhook_fax_event_subscription_list",
+          "description": "Fax Event -- List [read-only]"
+        },
+        {
+          "name": "webhook_sms_event_subscription_get",
+          "description": "SMS Event -- Get [read-only]"
+        },
+        {
+          "name": "webhook_sms_event_subscription_list",
+          "description": "SMS Event -- List [read-only]"
+        },
+        {
+          "name": "transcripts_get",
+          "description": "Call Transcript -- Get [read-only]"
+        },
+        {
+          "name": "transcripts_get_url",
+          "description": "Call Transcript -- Get URL [read-only]"
+        },
+        {
+          "name": "userdevices_get",
+          "description": "User Device -- Get [read-only]"
+        },
+        {
+          "name": "userdevices_list",
+          "description": "User Device -- List [read-only]"
+        },
+        {
+          "name": "caller_id_users_get",
+          "description": "Caller ID -- Get [read-only]"
+        },
+        {
+          "name": "deskphones_users_get",
+          "description": "Desk Phone -- Get [read-only]"
+        },
+        {
+          "name": "deskphones_users_list",
+          "description": "Desk Phone -- List [read-only]"
+        },
+        {
+          "name": "users_e911_get",
+          "description": "E911 Address -- Get [read-only]"
+        },
+        {
+          "name": "users_get",
+          "description": "User -- Get [read-only]"
+        },
+        {
+          "name": "users_list",
+          "description": "User -- List [read-only]"
+        },
+        {
+          "name": "users_list_personas",
+          "description": "Persona -- List [read-only]"
+        },
+        {
+          "name": "webhooks_get",
+          "description": "Webhook -- Get [read-only]"
+        },
+        {
+          "name": "webhooks_list",
+          "description": "Webhook -- List [read-only]"
+        },
+        {
+          "name": "websockets_get",
+          "description": "Websocket -- Get [read-only]"
+        },
+        {
+          "name": "websockets_list",
+          "description": "Websocket -- List [read-only]"
+        },
+        {
+          "name": "wfm_metrics_activity_get",
+          "description": "Activity Metrics [read-only]"
+        },
+        {
+          "name": "wfm_metrics_agent_get",
+          "description": "Agent Metrics [read-only]"
         }
       ]
     }
@@ -264,14 +459,9 @@
   "entitlementKey": "dialpad",
   "roles": [
     {
-      "key": "admin",
-      "label": "Dialpad Admin",
-      "description": "Full access: query calls, transcripts, analytics and the whole directory, plus the write actions (send SMS, place/hang up calls, edit contacts, block numbers, set agent duty status, request callbacks)."
-    },
-    {
       "key": "viewer",
       "label": "Viewer",
-      "description": "Read-only: calls, transcripts, AI recaps, analytics, users, contacts, offices, departments, call centers and phone numbers. No write actions."
+      "description": "Read-only access to all 102 Dialpad read endpoints."
     }
   ]
 }
