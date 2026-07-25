@@ -41,6 +41,11 @@
     }
   },
   "surfaces": {
+    "ui": {
+      "url": "https://dialpad.plugins.bibekpoudel.com/app",
+      "embeddable": true,
+      "description": "Conversation history — browse calls, read transcripts and AI recaps. Read-only; fetches through Eesa's gateway (which injects the tenant's Dialpad key), so the UI never holds a credential."
+    },
     "mcp": {
       "endpoint": "https://dialpad.plugins.bibekpoudel.com/mcp",
       "transport": "streamable-http",

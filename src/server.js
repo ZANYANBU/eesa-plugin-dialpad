@@ -23,6 +23,19 @@ const app = express();
 app.get('/health', (req, res) => res.json({ ok: true, plugin: MANIFEST.slug, version: MANIFEST.version }));
 app.get('/manifest', (req, res) => res.type('application/json').send(JSON.stringify(MANIFEST)));
 
+// Embedded UI surface (surfaces.ui). A static conversation-history page, loaded
+// by Eesa's plugins/[slug]/app iframe shell. It holds NO credential: it receives
+// a short-lived UI-session token over postMessage and fetches call data through
+// Eesa's gateway (which injects the tenant's Dialpad key). Framing is therefore
+// intentionally allowed FROM Eesa — the shell embeds this page in an iframe.
+const UI_FILE = join(__dirname, '..', 'public', 'app.html');
+app.get('/app', (req, res) => {
+  // Don't send X-Frame-Options: DENY here; this page is meant to be embedded by
+  // the Eesa shell. The gateway session token is what authorises data access,
+  // not the framing, so embedding the static shell is harmless on its own.
+  res.type('text/html').sendFile(UI_FILE);
+});
+
 app.post('/mcp', express.raw({ type: '*/*', limit: '1mb' }), async (req, res) => {
   const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
   let body;
