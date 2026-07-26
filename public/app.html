@@ -113,6 +113,18 @@
   .turn .sp.customer { color: var(--in); }
   .turn .tx { font-size: 13.5px; }
   .turn .ts { color: var(--ink-3); font-size: 11px; font-family: var(--mono); margin-left: 8px; }
+  /* Dialpad emits AI "moments" (call purpose, CSAT flags) in the same stream as
+     speech. They are events, not words — show them, but never as dialogue. */
+  .turn.sys { padding: 6px 0; }
+  .turn.sys .sp { color: var(--ink-3); font-weight: 500; }
+  .turn.sys .tx { font-size: 12px; color: var(--ink-3); font-family: var(--mono); }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 999px;
+          background: var(--accent-soft); color: var(--ink-2); font-size: 11px; }
+  .play { display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px;
+          border-radius: var(--radius); background: var(--accent); color: #fff;
+          font-size: 13px; font-weight: 600; text-decoration: none; }
+  .play:hover { filter: brightness(1.06); }
+  .muted-note { font-size: 12px; color: var(--ink-3); }
 
   /* ── states ────────────────────────────────────────────────────────── */
   .state { display: grid; place-items: center; padding: 60px 24px; text-align: center; color: var(--ink-3); gap: 12px; }
@@ -342,13 +354,25 @@
     var parts = [];
 
     // facts
-    parts.push('<div class="card"><h3>Call</h3><div class="body"><div class="facts">' +
-      fact('Direction', directionOf(call)) +
-      fact('Duration', fmtDur(call.duration || call.total_duration)) +
-      fact('Started', fmtTime(call.date_started || call.started_at)) +
-      fact('Number', numberOf(call) || '—') +
-      (call.target && call.target.name ? fact('Handled by', call.target.name) : '') +
-      '</div></div></div>');
+    // Merge the list row with the fetched detail. Opening a call from a filtered
+    // or paged list gave a row without duration/direction, so the Call card
+    // rendered five headers above five blanks. The detail is authoritative;
+    // fall back to the row, and drop any field we genuinely don't have rather
+    // than printing an empty column.
+    var det0 = (detailR && detailR.status === 'fulfilled' && detailR.value) ? detailR.value : {};
+    var c = Object.assign({}, call || {}, det0 || {});
+    var factRows = [
+      ['Direction', directionOf(c)],
+      ['Duration', fmtDur(c.duration || c.total_duration)],
+      ['Started', fmtTime(c.date_started || c.started_at)],
+      ['Number', numberOf(c)],
+      ['Handled by', (c.target && c.target.name) || '']
+    ].filter(function (r) { return r[1] && String(r[1]).trim() && r[1] !== '—'; });
+    if (factRows.length) {
+      parts.push('<div class="card"><h3>Call</h3><div class="body"><div class="facts">' +
+        factRows.map(function (r) { return fact(r[0], r[1]); }).join('') +
+        '</div></div></div>');
+    }
 
     // Recording — link out, deliberately.
     // Dialpad's admin_recording_urls are session-protected: fetching one
@@ -357,7 +381,7 @@
     // a share link — creates a PUBLIC url for a recorded customer call, which
     // is not something to do by default. So we hand the user a link that opens
     // in Dialpad, where they are already authorised.
-    var det = (detailR && detailR.status === 'fulfilled' && detailR.value) ? detailR.value : null;
+    var det = det0 && Object.keys(det0).length ? det0 : null;
     // Dialpad reports the audio under DIFFERENT keys depending on the call:
     // admin_recording_urls on some, recording_url / recording_details on
     // others (a call can be was_recorded:true with admin_recording_urls null).
@@ -375,15 +399,12 @@
     if (recUrls.length) {
       parts.push('<div class="card"><h3>Recording</h3><div class="body">' +
         recUrls.map(function (u, i) {
-          return '<a style="display:inline-flex;align-items:center;gap:6px;margin:0 8px 8px 0;' +
-            'padding:8px 14px;border-radius:var(--radius);background:var(--accent);color:#fff;' +
-            'font-size:13px;font-weight:600;text-decoration:none" href="' +
-            esc(u) + '" target="_blank" rel="noopener noreferrer">' +
+          return '<a class="play" style="margin:0 8px 8px 0" href="' + esc(u) +
+            '" target="_blank" rel="noopener noreferrer">' +
             '\u25B6 Play' + (recUrls.length > 1 ? ' (' + (i + 1) + ')' : '') + ' in Dialpad</a>';
         }).join('') +
-        '<div style="font-size:11px;color:var(--ink-3);margin-top:2px">' +
-        'Opens in Dialpad — sign in there if prompted. Recordings are not played inside Eesa.' +
-        '</div></div></div>');
+        '<div class="muted-note">Opens in Dialpad — sign in there if prompted.</div>' +
+        '</div></div>');
     } else if ((det && det.was_recorded) || (call && call.was_recorded)) {
       parts.push('<div class="card"><h3>Recording</h3><div class="body">' +
         '<div style="font-size:12px;color:var(--ink-3)">This call was recorded, but no playable link was returned. ' +
@@ -396,7 +417,7 @@
 
     // AI recap
     if (recapR.status === 'fulfilled' && recapR.value) {
-      var recap = recapR.value;
+      var recap = recapR.value;   // card only pushed below when it has content
       var summary = recap.summary || (Array.isArray(recap.summaries) ? recap.summaries.join('\n') : '') ||
                     (Array.isArray(recap.purposes) ? recap.purposes.join('\n') : '');
       var actions = Array.isArray(recap.action_items) ? recap.action_items : [];
@@ -417,9 +438,18 @@
       if (Array.isArray(lines) && lines.length) {
         tCard += lines.map(function (ln) {
           var who = (ln.name || ln.speaker || ln.user_type || '').toString();
-          var role = /agent|operator|rep|internal/i.test(who) ? 'agent' : 'customer';
           var text = ln.content || ln.text || ln.transcript || '';
           var ts = ln.time != null ? fmtClock(ln.time) : '';
+          // Dialpad interleaves AI "moments" (call purpose, CSAT flags) with
+          // speech. Rendering them as dialogue made the transcript read as if
+          // someone had said "ai_csat_reboot_ineligible" out loud. Keep them —
+          // they are useful — but mark them as events.
+          if (ln.type === 'moment') {
+            return '<div class="turn sys"><span class="sp">AI</span>' +
+                   '<span class="tx"><span class="chip">' + esc(String(text).replace(/_/g, ' ')) + '</span>' +
+                   (ts ? '<span class="ts">' + esc(ts) + '</span>' : '') + '</span></div>';
+          }
+          var role = /agent|operator|rep|internal/i.test(who) ? 'agent' : 'customer';
           return '<div class="turn"><span class="sp ' + role + '">' + esc(who || (role === 'agent' ? 'Agent' : 'Caller')) + '</span>' +
                  '<span class="tx">' + esc(text) + (ts ? '<span class="ts">' + esc(ts) + '</span>' : '') + '</span></div>';
         }).join('');
