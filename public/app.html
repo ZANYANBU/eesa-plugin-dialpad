@@ -325,14 +325,20 @@
     $('#detailBody').innerHTML = '<div class="state"><div class="spin"></div><div class="msg">Loading transcript…</div></div>';
 
     // Transcript and recap are independent — a call may have one, both or neither.
+    // Transcript, recap and the call detail are independent — a call may have
+    // any combination. The detail is what carries admin_recording_urls, which
+    // is the only route we have to the audio (see renderDetail).
+    // NOTE: call_get_call_info takes `id`, NOT `call_id` — its path is
+    // /call/{id}. Passing call_id returns "Missing required path parameter: id".
     var results = await Promise.allSettled([
       invoke('transcripts_get', { call_id: id }),
-      invoke('call_get_ai_recap', { id: id })
+      invoke('call_get_ai_recap', { id: id }),
+      invoke('call_get_call_info', { id: id })
     ]);
-    renderDetail(call, results[0], results[1]);
+    renderDetail(call, results[0], results[1], results[2]);
   }
 
-  function renderDetail(call, transcriptR, recapR) {
+  function renderDetail(call, transcriptR, recapR, detailR) {
     var parts = [];
 
     // facts
@@ -343,6 +349,33 @@
       fact('Number', numberOf(call) || '—') +
       (call.target && call.target.name ? fact('Handled by', call.target.name) : '') +
       '</div></div></div>');
+
+    // Recording — link out, deliberately.
+    // Dialpad's admin_recording_urls are session-protected: fetching one
+    // unauthenticated 302s to /login, and a cross-origin <audio> tag sends no
+    // Dialpad cookie, so inline playback cannot work. The alternative — minting
+    // a share link — creates a PUBLIC url for a recorded customer call, which
+    // is not something to do by default. So we hand the user a link that opens
+    // in Dialpad, where they are already authorised.
+    var det = (detailR && detailR.status === 'fulfilled' && detailR.value) ? detailR.value : null;
+    var recUrls = (det && Array.isArray(det.admin_recording_urls)) ? det.admin_recording_urls.filter(Boolean) : [];
+    if (recUrls.length) {
+      parts.push('<div class="card"><h3>Recording</h3><div class="body">' +
+        recUrls.map(function (u, i) {
+          return '<a style="display:inline-flex;align-items:center;gap:6px;margin:0 8px 8px 0;' +
+            'padding:8px 14px;border-radius:var(--radius);background:var(--accent);color:#fff;' +
+            'font-size:13px;font-weight:600;text-decoration:none" href="' +
+            esc(u) + '" target="_blank" rel="noopener noreferrer">' +
+            '\u25B6 Play' + (recUrls.length > 1 ? ' (' + (i + 1) + ')' : '') + ' in Dialpad</a>';
+        }).join('') +
+        '<div style="font-size:11px;color:var(--ink-3);margin-top:2px">' +
+        'Opens in Dialpad — sign in there if prompted. Recordings are not played inside Eesa.' +
+        '</div></div></div>');
+    } else if (call && call.was_recorded === false) {
+      parts.push('<div class="card"><h3>Recording</h3><div class="body">' +
+        '<div style="font-size:12px;color:var(--ink-3)">This call was not recorded.</div>' +
+        '</div></div>');
+    }
 
     // AI recap
     if (recapR.status === 'fulfilled' && recapR.value) {
