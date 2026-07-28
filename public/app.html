@@ -180,14 +180,28 @@
 
   // ── session, handed in by the Eesa shell over postMessage ──────────────
   var TOKEN = null;      // short-lived UI-session JWT (aud=dialpad, surface=ui)
-  var EESA = null;       // Eesa API origin — taken from the message origin, not guessed
+  var EESA = null;       // Eesa API origin — explicit apiBase, else the sender's origin
+  // Used when the session arrives WITHOUT a cross-origin parent (top-level load in
+  // the Eesa mobile WebView). Overridable at build time for non-prod deployments.
+  var EESA_FALLBACK = (window.EESA_ORIGIN || 'https://eesa.ai');
   var booted = false;
 
   window.addEventListener('message', function (ev) {
     var m = ev.data || {};
     if (m.type !== 'eesa:session' || !m.token) return;
-    // The origin that sent the session IS the Eesa origin we call back into.
-    EESA = ev.origin;
+    // Where to call Eesa back.
+    //
+    // Prefer an EXPLICIT apiBase from the shell. Falling back to ev.origin only
+    // holds when a cross-origin Eesa parent framed us; it breaks when this page
+    // is loaded TOP-LEVEL (the Eesa mobile app's WebView), because there the
+    // session is delivered by a same-window postMessage, whose origin is OUR OWN.
+    // We then POSTed /api/v1/gateway/plugin-ui-invoke/ at this plugin's own
+    // Express server, which has no such route -> 404, rendered as the useless
+    // "Request failed (404)". Never call ourselves; fall back to the known Eesa
+    // origin instead.
+    EESA = (typeof m.apiBase === 'string' && /^https?:\/\//.test(m.apiBase))
+      ? m.apiBase.replace(/\/+$/, '')
+      : (ev.origin && ev.origin !== window.location.origin ? ev.origin : EESA_FALLBACK);
     TOKEN = m.token;
     if (m.theme) document.documentElement.setAttribute('data-theme', m.theme);
     if (!booted) { booted = true; loadCalls(true); }
