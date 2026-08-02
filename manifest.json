@@ -4,7 +4,7 @@
   "name": "Dialpad",
   "version": "2.0.0",
   "description": "Dialpad cloud phone system as agent tools — the complete READ-ONLY surface of the official Dialpad Platform API v1.0 (102 GET endpoints: calls, transcripts, AI recaps, users, contacts, offices, departments, call centers, coaching teams, numbers, rooms, channels, meetings, analytics/stats/scorecards/WFM, and more). Multi-tenant: each workspace connects its own Dialpad API key. No writes.",
-  "icon": "https://cdn.eesa.ai/icons/dialpad.png",
+  "icon": "",
   "hostedBy": "self",
   "developer": {
     "name": "ZANYANBU",
