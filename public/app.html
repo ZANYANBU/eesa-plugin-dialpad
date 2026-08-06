@@ -2,139 +2,195 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Dialpad · Conversation history</title>
 <!--
   Embedded plugin UI (federated), loaded by Eesa's plugins/[slug]/app shell.
 
   DATA PATH — no credential ever reaches this page.
-    1. The shell posts { type:'eesa:session', token, theme } from Eesa's origin.
-    2. We capture that origin (event.origin) as the Eesa API base — never guessed.
-    3. Every read goes to  POST {eesa}/api/v1/gateway/plugin-ui-invoke/  with the
-       short-lived UI-session JWT as a Bearer token. Eesa verifies it, injects the
-       tenant's Dialpad key, and proxies to this plugin's own /mcp. The Dialpad key
-       exists only on Eesa's server; this page holds a 5-minute scoped token and
-       nothing else.
+    1. The shell posts { type:'eesa:session', token, theme, apiBase } from Eesa.
+    2. We use the EXPLICIT apiBase, else the cross-origin sender, else the known
+       Eesa origin. Never ev.origin blindly (see the note by the listener).
+    3. Reads go to  POST {eesa}/api/v1/gateway/plugin-ui-invoke/  with the
+       short-lived UI-session JWT as a Bearer token. Eesa verifies it, injects
+       the tenant's Dialpad key, and proxies to this plugin's own /mcp.
+    4. Recording AUDIO goes to GET {eesa}/api/v1/gateway/plugin-ui-media/recording/
+       which streams the bytes with the tenant's key server-side. See the
+       "recording" section for exactly why inline playback needs that endpoint.
+
+  UNITS — verified against the live Dialpad API, do not "simplify" this away:
+    * `duration` and `total_duration` are MILLISECONDS (floats), not seconds.
+      Proof from a real call: date_connected 1785979448224, date_ended
+      1785979568185 -> 119961ms, and the API reported duration 119961.031.
+      Dividing by 60 as if they were seconds is what produced "1999m 21s" for a
+      two-minute call.
+    * transcript line `time` is an ISO-8601 STRING in a NAIVE local timezone
+      ("2026-08-06T01:24:16.738447"), NOT an offset in seconds and NOT UTC —
+      it is ~5.5h away from the call's own epoch timestamps. So offsets are
+      computed RELATIVE TO THE FIRST LINE, which is the only anchor that is
+      actually sound. Number()-ing it gave NaN -> every row read "0:00".
 -->
 <style>
   :root {
-    --bg: #f6f7fb; --surface: #ffffff; --sunk: #eef1f6;
+    color-scheme: light dark;
+    --bg: #f6f7fb; --surface: #ffffff; --sunk: #eef1f6; --sunk-2: #e7ecf4;
     --ink: #0e1520; --ink-2: #56637a; --ink-3: #8b95a8;
-    --line: #e2e7ef; --accent: #5566ff; --accent-soft: #eef0ff;
-    --in: #12855b; --out: #7a5cff; --miss: #d0453c;
-    --radius: 12px;
+    --line: #e2e7ef; --accent: #4a5cf5; --accent-soft: #eceeff;
+    --in: #0f7a52; --out: #6d4ff0; --miss: #c8382f;
+    --radius: 14px;
     --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
     --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
   }
+  /* The shell tells us the theme; when it doesn't (standalone / first paint) we
+     follow the OS. data-theme must win in BOTH directions, so it is declared
+     after the media query. */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0e14; --surface: #131824; --sunk: #0e131d; --sunk-2: #182032;
+      --ink: #eef2f8; --ink-2: #9aa6bd; --ink-3: #6b7690;
+      --line: #222a39; --accent: #8b96ff; --accent-soft: #1c2340;
+      --in: #35c98a; --out: #a996ff; --miss: #ff6b60;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f6f7fb; --surface: #ffffff; --sunk: #eef1f6; --sunk-2: #e7ecf4;
+    --ink: #0e1520; --ink-2: #56637a; --ink-3: #8b95a8;
+    --line: #e2e7ef; --accent: #4a5cf5; --accent-soft: #eceeff;
+    --in: #0f7a52; --out: #6d4ff0; --miss: #c8382f;
+  }
   :root[data-theme="dark"] {
-    --bg: #0b0e14; --surface: #131824; --sunk: #0e131d;
-    --ink: #eef2f8; --ink-2: #9aa6bd; --ink-3: #66718a;
-    --line: #222a39; --accent: #7f8cff; --accent-soft: #1b2140;
+    --bg: #0b0e14; --surface: #131824; --sunk: #0e131d; --sunk-2: #182032;
+    --ink: #eef2f8; --ink-2: #9aa6bd; --ink-3: #6b7690;
+    --line: #222a39; --accent: #8b96ff; --accent-soft: #1c2340;
     --in: #35c98a; --out: #a996ff; --miss: #ff6b60;
   }
+
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
-    font-family: var(--sans); font-size: 14px; line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
+    font-family: var(--sans); font-size: 15px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased; overflow-x: hidden;
   }
   button { font: inherit; color: inherit; cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 
-  .app { display: grid; grid-template-columns: minmax(0, 380px) 1fr; height: 100dvh; }
-  @media (max-width: 760px) {
-    .app { grid-template-columns: 1fr; }
+  .app { display: grid; grid-template-columns: minmax(0, 390px) minmax(0, 1fr); height: 100dvh; }
+  @media (max-width: 820px) {
+    .app { grid-template-columns: minmax(0, 1fr); }
     .detail { display: none; }
     .app[data-view="detail"] .list { display: none; }
     .app[data-view="detail"] .detail { display: flex; }
   }
 
   /* ── list pane ─────────────────────────────────────────────────────── */
-  .list { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--surface); }
-  .list-head { padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
-  .list-head h1 { margin: 0; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
-  .list-head p { margin: 3px 0 0; color: var(--ink-3); font-size: 12.5px; }
-  .filters { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-  .filters label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--ink-3); letter-spacing: .02em; }
+  .list { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--surface); }
+  .list-head { padding: 16px 18px 14px; border-bottom: 1px solid var(--line); }
+  .list-head h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+  .list-head p { margin: 3px 0 0; color: var(--ink-3); font-size: 13px; }
+  .filters { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; align-items: flex-end; }
+  .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--ink-3); letter-spacing: .03em; text-transform: uppercase; flex: 1 1 130px; min-width: 0; }
   .filters input {
-    font: inherit; font-size: 13px; padding: 6px 9px; color: var(--ink);
-    background: var(--sunk); border: 1px solid var(--line); border-radius: 8px;
+    font: inherit; font-size: 15px; padding: 10px 11px; color: var(--ink); width: 100%;
+    background: var(--sunk); border: 1px solid var(--line); border-radius: 10px; min-height: 44px;
   }
-  .filters .apply { align-self: flex-end; padding: 7px 13px; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 8px; font-size: 13px; font-weight: 600; }
-  .filters .apply:hover { filter: brightness(1.05); }
+  .filters .apply { padding: 0 18px; min-height: 44px; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 10px; font-size: 14px; font-weight: 600; flex: 0 0 auto; }
+  .filters .apply:hover { filter: brightness(1.06); }
 
-  .rows { overflow-y: auto; flex: 1; min-height: 0; }
+  .rows { overflow-y: auto; overflow-x: hidden; flex: 1; min-height: 0; -webkit-overflow-scrolling: touch; }
   .row {
-    width: 100%; text-align: left; display: grid; grid-template-columns: 34px 1fr auto;
-    gap: 11px; align-items: center; padding: 12px 18px; background: none;
-    border: 0; border-bottom: 1px solid var(--line);
+    width: 100%; text-align: left; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto;
+    gap: 12px; align-items: center; padding: 13px 18px; background: none;
+    border: 0; border-bottom: 1px solid var(--line); min-height: 62px;
   }
   .row:hover { background: var(--sunk); }
   .row[aria-selected="true"] { background: var(--accent-soft); }
-  .dir { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; flex: none; }
-  .dir svg { width: 15px; height: 15px; }
-  .dir.inbound { color: var(--in); background: color-mix(in oklab, var(--in) 14%, transparent); }
-  .dir.outbound { color: var(--out); background: color-mix(in oklab, var(--out) 14%, transparent); }
-  .dir.missed { color: var(--miss); background: color-mix(in oklab, var(--miss) 14%, transparent); }
+  .dir { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; flex: none; }
+  .dir svg { width: 16px; height: 16px; }
+  .dir.inbound { color: var(--in); background: color-mix(in oklab, var(--in) 15%, transparent); }
+  .dir.outbound { color: var(--out); background: color-mix(in oklab, var(--out) 15%, transparent); }
+  .dir.missed { color: var(--miss); background: color-mix(in oklab, var(--miss) 15%, transparent); }
   .row .who { min-width: 0; }
-  .row .who b { font-weight: 600; font-size: 13.5px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .row .who span { color: var(--ink-3); font-size: 12px; font-family: var(--mono); }
+  .row .who b { font-weight: 600; font-size: 14.5px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .who span { color: var(--ink-3); font-size: 12.5px; font-family: var(--mono); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .row .meta { text-align: right; white-space: nowrap; }
-  .row .meta b { font-weight: 500; font-size: 12.5px; color: var(--ink-2); display: block; }
-  .row .meta span { color: var(--ink-3); font-size: 11.5px; }
+  .row .meta b { font-weight: 500; font-size: 13px; color: var(--ink-2); display: block; }
+  .row .meta span { color: var(--ink-3); font-size: 12px; }
+  .row .meta .rec { display: inline-block; vertical-align: -1px; margin-right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--miss); }
 
-  .more { margin: 14px auto; display: block; padding: 8px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; color: var(--ink-2); }
+  .more { margin: 16px auto; display: block; padding: 0 20px; min-height: 44px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; font-size: 14px; color: var(--ink-2); }
   .more:hover { border-color: var(--accent); color: var(--accent); }
   .more:disabled { opacity: .5; cursor: default; }
 
   /* ── detail pane ───────────────────────────────────────────────────── */
-  .detail { display: flex; flex-direction: column; min-height: 0; }
-  .detail-head { padding: 16px 22px; border-bottom: 1px solid var(--line); background: var(--surface); display: flex; align-items: center; gap: 14px; }
-  .back { display: none; }
-  @media (max-width: 760px) { .back { display: inline-grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 8px; } }
+  .detail { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .detail-head { padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--surface); display: flex; align-items: center; gap: 12px; }
+  .back { display: none; background: none; border: 1px solid var(--line); }
+  @media (max-width: 820px) { .back { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 10px; flex: none; } }
   .detail-head .title { min-width: 0; flex: 1; }
-  .detail-head .title b { font-size: 15.5px; font-weight: 650; display: block; }
-  .detail-head .title span { color: var(--ink-3); font-size: 12.5px; font-family: var(--mono); }
-  .detail-body { overflow-y: auto; padding: 22px; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 20px; }
+  .detail-head .title b { font-size: 16px; font-weight: 650; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .detail-head .title span { color: var(--ink-3); font-size: 13px; font-family: var(--mono); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .detail-body { overflow-y: auto; overflow-x: hidden; padding: 20px; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 18px; -webkit-overflow-scrolling: touch; }
+  @media (max-width: 820px) { .detail-body { padding: 16px; } }
 
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-  .card > h3 { margin: 0; padding: 13px 16px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--line); font-weight: 650; }
+  .card > h3 { margin: 0; padding: 12px 16px; font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--line); font-weight: 650; }
   .card .body { padding: 16px; }
+  .card .body > :first-child { margin-top: 0; }
+  .note { font-size: 13px; color: var(--ink-3); }
 
-  .recap { line-height: 1.6; color: var(--ink); white-space: pre-wrap; }
-  .facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px 20px; }
-  .fact b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); }
-  .fact span { font-size: 14px; }
+  .recap { line-height: 1.65; color: var(--ink); white-space: pre-wrap; max-width: 66ch; }
+  .acts { margin: 14px 0 0; padding-left: 20px; }
+  .acts li { margin: 3px 0; }
+  .acts-h { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); font-weight: 650; }
 
-  .turn { display: grid; grid-template-columns: auto 1fr; gap: 12px; padding: 9px 0; }
-  .turn + .turn { border-top: 1px solid var(--line); }
-  .turn .sp { font-size: 12px; font-weight: 600; white-space: nowrap; padding-top: 1px; }
-  .turn .sp.agent { color: var(--out); }
-  .turn .sp.customer { color: var(--in); }
-  .turn .tx { font-size: 13.5px; }
-  .turn .ts { color: var(--ink-3); font-size: 11px; font-family: var(--mono); margin-left: 8px; }
-  /* Dialpad emits AI "moments" (call purpose, CSAT flags) in the same stream as
-     speech. They are events, not words — show them, but never as dialogue. */
-  .turn.sys { padding: 6px 0; }
-  .turn.sys .sp { color: var(--ink-3); font-weight: 500; }
-  .turn.sys .tx { font-size: 12px; color: var(--ink-3); font-family: var(--mono); }
-  .chip { display: inline-block; padding: 2px 8px; border-radius: 999px;
-          background: var(--accent-soft); color: var(--ink-2); font-size: 11px; }
-  .play { display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px;
-          border-radius: var(--radius); background: var(--accent); color: #fff;
-          font-size: 13px; font-weight: 600; text-decoration: none; }
-  .play:hover { filter: brightness(1.06); }
-  .muted-note { font-size: 12px; color: var(--ink-3); }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 14px 20px; }
+  .fact b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); font-weight: 650; }
+  .fact span { font-size: 15px; word-break: break-word; }
+
+  /* ── transcript: the main content ──────────────────────────────────── */
+  .tr { display: flex; flex-direction: column; gap: 16px; }
+  .grp { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 12px; }
+  .av { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+        font-size: 12.5px; font-weight: 650; letter-spacing: .01em; }
+  .grp.agent .av { color: var(--out); background: color-mix(in oklab, var(--out) 15%, transparent); }
+  .grp.customer .av { color: var(--in); background: color-mix(in oklab, var(--in) 15%, transparent); }
+  .grp .head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 3px; }
+  .grp .nm { font-size: 13.5px; font-weight: 650; }
+  .grp.agent .nm { color: var(--out); }
+  .grp.customer .nm { color: var(--in); }
+  .grp .rl { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+  .grp .at { font-size: 12px; color: var(--ink-3); font-family: var(--mono); }
+  .grp p { margin: 0 0 5px; font-size: 15px; line-height: 1.6; max-width: 62ch; overflow-wrap: anywhere; }
+  .grp p:last-child { margin-bottom: 0; }
+
+  .tags { margin-top: 18px; padding-top: 14px; border-top: 1px dashed var(--line); }
+  .tags .h { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); font-weight: 650; margin-bottom: 7px; }
+  .chip { display: inline-block; padding: 3px 10px; margin: 0 6px 6px 0; border-radius: 999px;
+          background: var(--sunk-2); color: var(--ink-2); font-size: 12px; }
+
+  /* ── recording ─────────────────────────────────────────────────────── */
+  .player { display: flex; flex-direction: column; gap: 10px; }
+  .player audio { width: 100%; min-height: 44px; display: block; }
+  .pbtn { display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+          padding: 0 20px; min-height: 46px; border: 0; border-radius: 12px;
+          background: var(--accent); color: #fff; font-size: 15px; font-weight: 600;
+          text-decoration: none; align-self: flex-start; max-width: 100%; }
+  .pbtn:hover { filter: brightness(1.06); }
+  .pbtn:disabled { opacity: .65; cursor: progress; }
+  .lnk { display: inline-flex; align-items: center; gap: 8px; min-height: 44px;
+         color: var(--accent); font-size: 14px; font-weight: 600; text-decoration: none; }
+  .lnk:hover { text-decoration: underline; }
 
   /* ── states ────────────────────────────────────────────────────────── */
-  .state { display: grid; place-items: center; padding: 60px 24px; text-align: center; color: var(--ink-3); gap: 12px; }
+  .state { display: grid; place-items: center; padding: 56px 24px; text-align: center; color: var(--ink-3); gap: 12px; }
   .state svg { width: 34px; height: 34px; opacity: .6; }
-  .state .msg { max-width: 34ch; font-size: 13.5px; }
+  .state .msg { max-width: 36ch; font-size: 14px; }
   .spin { width: 26px; height: 26px; border: 2.5px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: sp .7s linear infinite; }
   @keyframes sp { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
   .skel { height: 62px; border-bottom: 1px solid var(--line); background: linear-gradient(90deg, var(--sunk), var(--surface), var(--sunk)); background-size: 200% 100%; animation: sh 1.2s infinite; }
   @keyframes sh { to { background-position: -200% 0; } }
+  @media (prefers-reduced-motion: reduce) { .spin, .skel { animation: none; } }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -144,7 +200,7 @@
     <section class="list">
       <div class="list-head">
         <h1>Conversation history</h1>
-        <p id="sub">Calls, transcripts and AI recaps</p>
+        <p id="sub">Calls, transcripts and recordings</p>
         <div class="filters">
           <label>From<input type="date" id="from" /></label>
           <label>To<input type="date" id="to" /></label>
@@ -160,15 +216,15 @@
     <!-- DETAIL -->
     <section class="detail">
       <div class="detail-head">
-        <button class="back" id="back" aria-label="Back to list">
-          <svg viewBox="0 0 20 20" fill="none" width="16" height="16"><path d="M12 5l-5 5 5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <button class="back" id="back" aria-label="Back to the call list">
+          <svg viewBox="0 0 20 20" fill="none" width="18" height="18"><path d="M12 5l-5 5 5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <div class="title"><b id="dTitle">Select a conversation</b><span id="dSub"></span></div>
       </div>
       <div class="detail-body" id="detailBody">
         <div class="state">
           <svg viewBox="0 0 24 24" fill="none"><path d="M4 5h16v11H8l-4 3V5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-          <div class="msg">Pick a call on the left to read its transcript and AI recap.</div>
+          <div class="msg">Pick a call on the left to read its transcript and play the recording.</div>
         </div>
       </div>
     </section>
@@ -236,19 +292,50 @@
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
   }); }
+  function num(v) { var n = Number(v); return isFinite(n) ? n : null; }
+
   function fmtTime(ms) {
-    if (!ms) return '';
-    var d = new Date(Number(ms));
-    if (isNaN(d)) return '';
+    var n = num(ms); if (!n) return '';
+    var d = new Date(n);
+    if (isNaN(d.getTime())) return '';
     return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
-  function fmtDur(sec) {
-    var s = Number(sec); if (!s || isNaN(s)) return '—';
-    var m = Math.floor(s / 60), r = Math.round(s % 60);
-    return m ? (m + 'm ' + r + 's') : (r + 's');
+
+  /**
+   * Format a duration given in MILLISECONDS.
+   *
+   * Dialpad returns `duration` / `total_duration` as millisecond floats — see
+   * the units note in the page header. The old code divided by 60 as if they
+   * were seconds, which is where "1999m 21s" for a 2-minute call came from.
+   */
+  function fmtDur(ms) {
+    var n = num(ms);
+    if (n == null || n < 0) return '';
+    var s = Math.round(n / 1000);
+    if (s < 60) return s + 's';
+    var m = Math.floor(s / 60), r = s % 60;
+    if (m < 60) return m + 'm ' + r + 's';
+    return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
   }
+
+  /**
+   * Talk time and total (incl. ringing), both in ms.
+   *
+   * Preferred source is arithmetic on the call's own epoch timestamps, which is
+   * ground truth; the reported fields are the fallback. On real calls the two
+   * agree exactly (date_ended - date_connected = 119961ms, duration = 119961.031),
+   * which is also how the millisecond unit was established.
+   */
+  function timings(c) {
+    c = c || {};
+    var started = num(c.date_started), ended = num(c.date_ended), conn = num(c.date_connected);
+    var talk = (conn && ended && ended >= conn) ? ended - conn : num(c.duration);
+    var total = (started && ended && ended >= started) ? ended - started : num(c.total_duration);
+    return { talk: talk, total: total, connected: !!(conn || num(c.duration)) };
+  }
+
   function nameOf(call) {
-    var c = call.contact || call.external_number_display || {};
+    var c = call.contact || {};
     return (c && (c.name || c.display_name)) || call.contact_name ||
            call.external_number || call.to_number || call.from_number || 'Unknown';
   }
@@ -262,10 +349,142 @@
     return 'outbound';
   }
   var DIR_ICON = {
-    inbound: '<path d="M15 5L6 14m0 0h6m-6 0V8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
-    outbound: '<path d="M5 15l9-9m0 0H8m6 0v6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
-    missed: '<path d="M6 6l8 8m0-8l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'
+    inbound: '<path d="M15 5L6 14m0 0h6m-6 0V8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+    outbound: '<path d="M5 15l9-9m0 0H8m6 0v6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+    missed: '<path d="M6 6l8 8m0-8l-8 8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>'
   };
+
+  function initials(name) {
+    var parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return '?';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  /**
+   * A card, or nothing at all.
+   *
+   * An empty titled box is worse than no box, so a card can only exist if it has
+   * a body. Every card on this page goes through here, which makes "never render
+   * an empty header" structural rather than something each call site remembers.
+   */
+  function card(title, body) {
+    if (!body || !String(body).trim()) return '';
+    return '<div class="card"><h3>' + esc(title) + '</h3><div class="body">' + body + '</div></div>';
+  }
+  function fact(label, val) {
+    return '<div class="fact"><b>' + esc(label) + '</b><span>' + esc(val) + '</span></div>';
+  }
+
+  // ── recordings ──────────────────────────────────────────────────────────
+  // Dialpad exposes call audio under THREE different keys and populates
+  // different ones on different legs of the same conversation, so read all
+  // three. They are NOT equivalent:
+  //
+  //   dialpad.com/r/<id>                     — Dialpad serves these bytes to an
+  //                                            API-KEY request (302 -> 302 ->
+  //                                            200 audio/mpeg, Range honoured),
+  //                                            so Eesa can stream them for us.
+  //   dialpad.com/blob/adminrecording/<id>   — 302s to /login even WITH a valid
+  //                                            API key. Browser-session only.
+  //                                            Nothing server-side can fetch it,
+  //                                            so it stays a link-out.
+  var SESSION_ONLY = /\/blob\/adminrecording\//i;
+
+  function recordingsOf(det) {
+    var out = [], seen = {};
+    function add(u) {
+      if (!u || typeof u !== 'string' || seen[u]) return;
+      seen[u] = 1;
+      out.push({ url: u, streamable: !SESSION_ONLY.test(u) });
+    }
+    if (det) {
+      var ru = det.recording_url;
+      (Array.isArray(ru) ? ru : (ru ? [ru] : [])).forEach(add);
+      (Array.isArray(det.recording_details) ? det.recording_details : []).forEach(function (r) {
+        if (r && r.url) add(r.url);
+      });
+      (Array.isArray(det.admin_recording_urls) ? det.admin_recording_urls : []).forEach(add);
+    }
+    return out;
+  }
+
+  /**
+   * Load a call's recording as playable audio.
+   *
+   * The bytes come from Eesa's authenticated media endpoint, which holds the
+   * tenant's Dialpad key server-side. We fetch with the Authorization HEADER and
+   * hand the player a blob: URL, rather than putting the session token in an
+   * <audio src> query string — a token in a URL ends up in logs and referrers.
+   * Recordings are small (a 2-minute call is ~240 KB), and seeking on a blob is
+   * instant, so this is the right trade here. The endpoint itself streams and
+   * honours Range for any future consumer that needs it.
+   */
+  async function loadAudio(callId) {
+    var res = await fetch(
+      EESA + '/api/v1/gateway/plugin-ui-media/recording/?call_id=' + encodeURIComponent(callId),
+      { headers: { Authorization: 'Bearer ' + TOKEN } }
+    );
+    if (!res.ok) {
+      var detail = '', reason = '';
+      try { var j = await res.json(); detail = j.detail || ''; reason = j.reason || ''; } catch (e) {}
+      var err = new Error(detail || ('Could not load the recording (' + res.status + ').'));
+      err.status = res.status; err.reason = reason;
+      throw err;
+    }
+    return URL.createObjectURL(await res.blob());
+  }
+
+  var currentObjectUrl = null;
+  function releaseAudio() {
+    if (currentObjectUrl) { try { URL.revokeObjectURL(currentObjectUrl); } catch (e) {} currentObjectUrl = null; }
+  }
+
+  function wireRecording(callId, recs) {
+    var host = $('#recWrap');
+    if (!host) return;
+    var btn = host.querySelector('#recPlay');
+    if (!btn) return;
+    btn.addEventListener('click', async function () {
+      btn.disabled = true;
+      btn.textContent = 'Loading audio…';
+      try {
+        releaseAudio();
+        var url = await loadAudio(callId);
+        currentObjectUrl = url;
+        var audio = document.createElement('audio');
+        audio.controls = true;
+        audio.preload = 'metadata';
+        audio.src = url;
+        // If the platform refuses to play the blob (some older WebViews), don't
+        // leave a dead player sitting there — fall back to the Dialpad link.
+        audio.addEventListener('error', function () {
+          host.innerHTML = fallbackHtml(recs,
+            'This browser could not play the audio inline.');
+        });
+        host.innerHTML = '';
+        host.appendChild(audio);
+        var n = document.createElement('div');
+        n.className = 'note';
+        n.textContent = 'Streamed through Eesa — the recording never leaves your workspace’s account.';
+        host.appendChild(n);
+        try { await audio.play(); } catch (e) { /* autoplay may be blocked; controls are there */ }
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = '▶  Play recording';
+        var why = e && e.message ? e.message : 'Could not load the recording.';
+        host.innerHTML = fallbackHtml(recs, why);
+      }
+    });
+  }
+
+  function fallbackHtml(recs, why) {
+    var links = recs.map(function (u, i) {
+      return '<a class="lnk" href="' + esc(u.url) + '" target="_blank" rel="noopener noreferrer">' +
+             '↗︎ Open recording' + (recs.length > 1 ? ' ' + (i + 1) : '') + ' in Dialpad</a>';
+    }).join('<br />');
+    return '<div class="note" style="margin-bottom:8px">' + esc(why) + '</div>' + links;
+  }
 
   // ── list ────────────────────────────────────────────────────────────────
   var cursor = null, loading = false, calls = [], selectedId = null;
@@ -312,11 +531,15 @@
     var html = calls.map(function (c) {
       var dir = directionOf(c);
       var id = c.call_id || c.id;
+      var t = timings(c);
+      // A call that never connected has no talk time — showing its ring time as
+      // if it were a conversation is a small lie, so label it.
+      var dur = t.talk ? fmtDur(t.talk) : (t.total ? 'rang ' + fmtDur(t.total) : '');
       return '<button class="row" data-id="' + esc(id) + '" aria-selected="' + (String(id) === String(selectedId)) + '">' +
         '<span class="dir ' + dir + '"><svg viewBox="0 0 20 20" fill="none">' + DIR_ICON[dir] + '</svg></span>' +
         '<span class="who"><b>' + esc(nameOf(c)) + '</b><span>' + esc(numberOf(c)) + '</span></span>' +
         '<span class="meta"><b>' + esc(fmtTime(c.date_started || c.started_at || c.date_connected)) + '</b>' +
-        '<span>' + esc(fmtDur(c.duration || c.total_duration)) + '</span></span>' +
+        '<span>' + (c.was_recorded ? '<i class="rec" title="Recorded"></i>' : '') + esc(dur) + '</span></span>' +
         '</button>';
     }).join('');
     if (cursor) html += '<button class="more" id="more">Load more</button>';
@@ -341,19 +564,19 @@
   // ── detail ────────────────────────────────────────────────────────────────
   async function openCall(id) {
     selectedId = id;
+    releaseAudio();
     $('#app').setAttribute('data-view', 'detail');
     Array.prototype.forEach.call(document.querySelectorAll('.row'), function (b) {
       b.setAttribute('aria-selected', String(b.getAttribute('data-id') === String(id)));
     });
     var call = calls.filter(function (c) { return String(c.call_id || c.id) === String(id); })[0] || {};
     $('#dTitle').textContent = nameOf(call);
-    $('#dSub').textContent = numberOf(call) + ' · ' + fmtTime(call.date_started || call.started_at);
+    $('#dSub').textContent = [numberOf(call), fmtTime(call.date_started || call.started_at)]
+      .filter(Boolean).join(' · ');
     $('#detailBody').innerHTML = '<div class="state"><div class="spin"></div><div class="msg">Loading transcript…</div></div>';
 
-    // Transcript and recap are independent — a call may have one, both or neither.
     // Transcript, recap and the call detail are independent — a call may have
-    // any combination. The detail is what carries admin_recording_urls, which
-    // is the only route we have to the audio (see renderDetail).
+    // any combination. The detail is what carries the recording keys.
     // NOTE: call_get_call_info takes `id`, NOT `call_id` — its path is
     // /call/{id}. Passing call_id returns "Missing required path parameter: id".
     var results = await Promise.allSettled([
@@ -361,137 +584,197 @@
       invoke('call_get_ai_recap', { id: id }),
       invoke('call_get_call_info', { id: id })
     ]);
-    renderDetail(call, results[0], results[1], results[2]);
+    if (String(selectedId) !== String(id)) return; // a newer selection won
+    renderDetail(id, call, results[0], results[1], results[2]);
   }
 
-  function renderDetail(call, transcriptR, recapR, detailR) {
+  function renderDetail(id, call, transcriptR, recapR, detailR) {
     var parts = [];
 
-    // facts
-    // Merge the list row with the fetched detail. Opening a call from a filtered
-    // or paged list gave a row without duration/direction, so the Call card
-    // rendered five headers above five blanks. The detail is authoritative;
-    // fall back to the row, and drop any field we genuinely don't have rather
-    // than printing an empty column.
-    var det0 = (detailR && detailR.status === 'fulfilled' && detailR.value) ? detailR.value : {};
-    var c = Object.assign({}, call || {}, det0 || {});
+    // The fetched detail is authoritative; the list row is the fallback (opening
+    // a call from a paged list gave a row missing half these fields, which is
+    // how five headers ended up over five blanks).
+    var det = (detailR && detailR.status === 'fulfilled' && detailR.value) ? detailR.value : null;
+    var c = Object.assign({}, call || {}, det || {});
+    var t = timings(c);
+
+    // ── Call facts ──
     var factRows = [
       ['Direction', directionOf(c)],
-      ['Duration', fmtDur(c.duration || c.total_duration)],
+      ['Talk time', t.talk ? fmtDur(t.talk) : (t.total ? 'not answered' : '')],
+      // Only worth its own column when it actually differs from talk time.
+      ['Incl. ringing', (t.total && t.talk && t.total - t.talk > 1500) ? fmtDur(t.total) : ''],
       ['Started', fmtTime(c.date_started || c.started_at)],
       ['Number', numberOf(c)],
       ['Handled by', (c.target && c.target.name) || '']
-    ].filter(function (r) { return r[1] && String(r[1]).trim() && r[1] !== '—'; });
-    if (factRows.length) {
-      parts.push('<div class="card"><h3>Call</h3><div class="body"><div class="facts">' +
-        factRows.map(function (r) { return fact(r[0], r[1]); }).join('') +
-        '</div></div></div>');
-    }
+    ].filter(function (r) { return r[1] && String(r[1]).trim(); });
+    parts.push(card('Call', factRows.length
+      ? '<div class="facts">' + factRows.map(function (r) { return fact(r[0], r[1]); }).join('') + '</div>'
+      : ''));
 
-    // Recording — link out, deliberately.
-    // Dialpad's admin_recording_urls are session-protected: fetching one
-    // unauthenticated 302s to /login, and a cross-origin <audio> tag sends no
-    // Dialpad cookie, so inline playback cannot work. The alternative — minting
-    // a share link — creates a PUBLIC url for a recorded customer call, which
-    // is not something to do by default. So we hand the user a link that opens
-    // in Dialpad, where they are already authorised.
-    var det = det0 && Object.keys(det0).length ? det0 : null;
-    // Dialpad reports the audio under DIFFERENT keys depending on the call:
-    // admin_recording_urls on some, recording_url / recording_details on
-    // others (a call can be was_recorded:true with admin_recording_urls null).
-    // Read all three and de-duplicate, or genuinely recorded calls show nothing.
-    var recUrls = [];
-    if (det) {
-      [].concat(
-        Array.isArray(det.admin_recording_urls) ? det.admin_recording_urls : [],
-        Array.isArray(det.recording_url) ? det.recording_url : (det.recording_url ? [det.recording_url] : []),
-        Array.isArray(det.recording_details) ? det.recording_details.map(function (r) { return r && r.url; }) : []
-      ).forEach(function (u) {
-        if (u && recUrls.indexOf(u) === -1) recUrls.push(u);
-      });
-    }
-    if (recUrls.length) {
-      parts.push('<div class="card"><h3>Recording</h3><div class="body">' +
-        recUrls.map(function (u, i) {
-          return '<a class="play" style="margin:0 8px 8px 0" href="' + esc(u) +
-            '" target="_blank" rel="noopener noreferrer">' +
-            '\u25B6 Play' + (recUrls.length > 1 ? ' (' + (i + 1) + ')' : '') + ' in Dialpad</a>';
-        }).join('') +
-        '<div class="muted-note">Opens in Dialpad — sign in there if prompted.</div>' +
-        '</div></div>');
-    } else if ((det && det.was_recorded) || (call && call.was_recorded)) {
-      parts.push('<div class="card"><h3>Recording</h3><div class="body">' +
-        '<div style="font-size:12px;color:var(--ink-3)">This call was recorded, but no playable link was returned. ' +
-        'Open it in Dialpad to listen.</div></div></div>');
-    } else if (call && call.was_recorded === false) {
-      parts.push('<div class="card"><h3>Recording</h3><div class="body">' +
-        '<div style="font-size:12px;color:var(--ink-3)">This call was not recorded.</div>' +
-        '</div></div>');
-    }
+    // ── Recording ──
+    parts.push(card('Recording', recordingBody(c, det)));
 
-    // AI recap
-    if (recapR.status === 'fulfilled' && recapR.value) {
-      var recap = recapR.value;   // card only pushed below when it has content
-      var summary = recap.summary || (Array.isArray(recap.summaries) ? recap.summaries.join('\n') : '') ||
+    // ── AI recap ──
+    // Not every Dialpad plan exposes recaps — on accounts without them the tool
+    // 404s for every call, and a card that only ever says "nothing here" is
+    // noise, so an absent recap renders nothing at all.
+    if (recapR && recapR.status === 'fulfilled' && recapR.value) {
+      var recap = recapR.value;
+      var summary = recap.summary ||
+                    (Array.isArray(recap.summaries) ? recap.summaries.join('\n') : '') ||
                     (Array.isArray(recap.purposes) ? recap.purposes.join('\n') : '');
-      var actions = Array.isArray(recap.action_items) ? recap.action_items : [];
-      if (summary || actions.length) {
-        parts.push('<div class="card"><h3>AI recap</h3><div class="body">' +
-          (summary ? '<div class="recap">' + esc(summary) + '</div>' : '') +
-          (actions.length ? '<div style="margin-top:12px"><b style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3)">Action items</b><ul style="margin:6px 0 0;padding-left:18px">' +
-            actions.map(function (a) { return '<li>' + esc(typeof a === 'string' ? a : (a.text || a.name || '')) + '</li>'; }).join('') + '</ul></div>' : '') +
-          '</div></div>');
-      }
+      var actions = (Array.isArray(recap.action_items) ? recap.action_items : [])
+        .map(function (a) { return typeof a === 'string' ? a : (a && (a.text || a.name)) || ''; })
+        .filter(Boolean);
+      parts.push(card('AI recap',
+        (summary ? '<div class="recap">' + esc(summary) + '</div>' : '') +
+        (actions.length
+          ? '<div class="acts-h" style="margin-top:14px">Action items</div><ul class="acts">' +
+            actions.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>'
+          : '')));
     }
 
-    // transcript
-    var tCard = '<div class="card"><h3>Transcript</h3><div class="body">';
-    if (transcriptR.status === 'fulfilled' && transcriptR.value) {
-      var t = transcriptR.value;
-      var lines = t.lines || t.transcript || t.entries || [];
-      if (Array.isArray(lines) && lines.length) {
-        tCard += lines.map(function (ln) {
-          var who = (ln.name || ln.speaker || ln.user_type || '').toString();
-          var text = ln.content || ln.text || ln.transcript || '';
-          var ts = ln.time != null ? fmtClock(ln.time) : '';
-          // Dialpad interleaves AI "moments" (call purpose, CSAT flags) with
-          // speech. Rendering them as dialogue made the transcript read as if
-          // someone had said "ai_csat_reboot_ineligible" out loud. Keep them —
-          // they are useful — but mark them as events.
-          if (ln.type === 'moment') {
-            return '<div class="turn sys"><span class="sp">AI</span>' +
-                   '<span class="tx"><span class="chip">' + esc(String(text).replace(/_/g, ' ')) + '</span>' +
-                   (ts ? '<span class="ts">' + esc(ts) + '</span>' : '') + '</span></div>';
-          }
-          var role = /agent|operator|rep|internal/i.test(who) ? 'agent' : 'customer';
-          return '<div class="turn"><span class="sp ' + role + '">' + esc(who || (role === 'agent' ? 'Agent' : 'Caller')) + '</span>' +
-                 '<span class="tx">' + esc(text) + (ts ? '<span class="ts">' + esc(ts) + '</span>' : '') + '</span></div>';
-        }).join('');
-      } else {
-        tCard += '<div style="color:var(--ink-3);font-size:13px">No transcript is available for this call.</div>';
-      }
-    } else {
-      var msg = (transcriptR.reason && transcriptR.reason.message) || 'No transcript is available for this call.';
-      tCard += '<div style="color:var(--ink-3);font-size:13px">' + esc(msg) + '</div>';
+    // ── Transcript ──
+    parts.push(card('Transcript', transcriptBody(transcriptR)));
+
+    $('#detailBody').innerHTML = parts.filter(Boolean).join('');
+    wireRecording(id, recordingsOf(det));
+  }
+
+  function recordingBody(c, det) {
+    var recs = recordingsOf(det);
+    if (!recs.length) {
+      // Say something true, or say nothing. `was_recorded` is unreliable on its
+      // own (a real call came back was_recorded:false while still carrying an
+      // admin recording), so we only speak when the detail actually loaded.
+      if (det && det.was_recorded === false) return '<div class="note">This call was not recorded.</div>';
+      if (det) return '<div class="note">No recording is available for this call.</div>';
+      return '';
     }
-    tCard += '</div></div>';
-    parts.push(tCard);
-
-    $('#detailBody').innerHTML = parts.join('');
+    var streamable = recs.filter(function (r) { return r.streamable; });
+    if (streamable.length) {
+      return '<div class="player" id="recWrap">' +
+        '<button class="pbtn" id="recPlay">▶  Play recording</button>' +
+        '</div>';
+    }
+    // Only admin recordings: Dialpad refuses these to anything but a signed-in
+    // browser session, so there is nothing to play here and we say why rather
+    // than showing a player that cannot work.
+    return '<div class="player" id="recWrap">' +
+      fallbackHtml(recs, 'Dialpad only serves this admin recording to a signed-in Dialpad session, so it can’t be played here.') +
+      '</div>';
   }
 
-  function fact(label, val) {
-    return '<div class="fact"><b>' + esc(label) + '</b><span>' + esc(val) + '</span></div>';
-  }
-  function fmtClock(sec) {
-    var s = Math.floor(Number(sec) || 0);
-    var m = Math.floor(s / 60), r = s % 60;
-    return m + ':' + (r < 10 ? '0' : '') + r;
+  /**
+   * Render the transcript.
+   *
+   * Two things Dialpad does that have to be handled:
+   *
+   * 1. It interleaves AI "moments" into the same `lines` array as speech, with
+   *    `type:"moment"`. Their `content` is only the moment's TYPE NAME —
+   *    "whole_call_summary", "call_purpose_category", "ai_csat_reboot_ineligible"
+   *    — with no payload. Styling them differently (the previous attempt) still
+   *    left the transcript reading as if someone had said "whole call summary"
+   *    out loud. They carry no dialogue, so they come OUT of the conversation
+   *    and are collected into a footnote, where the information survives without
+   *    pretending to be speech.
+   * 2. `time` is an ISO string in a naive local timezone, so offsets are
+   *    computed relative to the first line (see the header note).
+   */
+  function transcriptBody(transcriptR) {
+    if (!transcriptR || transcriptR.status !== 'fulfilled' || !transcriptR.value) {
+      var msg = (transcriptR && transcriptR.reason && transcriptR.reason.message) || '';
+      // A 404 from Dialpad means "no transcript", not "something broke".
+      if (!msg || /404|not found/i.test(msg)) return '<div class="note">No transcript for this call.</div>';
+      return '<div class="note">' + esc(msg) + '</div>';
+    }
+    var t = transcriptR.value;
+    var lines = t.lines || t.transcript || t.entries || [];
+    if (!Array.isArray(lines) || !lines.length) {
+      return '<div class="note">No transcript for this call.</div>';
+    }
+
+    var speech = [], moments = [], seenMoment = {};
+    lines.forEach(function (ln) {
+      if (!ln) return;
+      var text = String(ln.content || ln.text || ln.transcript || '').trim();
+      if (!text) return;
+      if (ln.type === 'moment' || ln.type === 'event') {
+        var label = text.replace(/_/g, ' ').trim();
+        if (label && !seenMoment[label]) { seenMoment[label] = 1; moments.push(label); }
+        return;
+      }
+      speech.push(ln);
+    });
+
+    var body = '';
+    if (speech.length) {
+      var base = null;
+      for (var i = 0; i < speech.length; i++) {
+        var p = Date.parse(speech[i].time);
+        if (!isNaN(p)) { base = p; break; }
+      }
+      // Group consecutive lines from the same speaker into one block, so a
+      // back-and-forth reads like a conversation instead of a table of rows.
+      // A long silence still breaks the block — on a real call "Hello." came 74
+      // seconds after the same speaker's previous sentence, and folding those
+      // together buries when it was actually said.
+      var GAP_MS = 25000;
+      var groups = [];
+      speech.forEach(function (ln) {
+        var who = String(ln.name || ln.speaker || '').trim();
+        // Exact, from the payload: an internal Dialpad user carries `user_id`,
+        // an external party carries `contact_id`. Far better than guessing from
+        // the display name.
+        var role = ln.user_id ? 'agent' : (ln.contact_id ? 'customer' : 'agent');
+        var at = Date.parse(ln.time);
+        var last = groups[groups.length - 1];
+        if (last && last.who === who && last.role === role &&
+            !(!isNaN(at) && !isNaN(last.lastAt) && at - last.lastAt > GAP_MS)) {
+          last.lines.push(ln);
+          if (!isNaN(at)) last.lastAt = at;
+          return;
+        }
+        groups.push({ who: who, role: role, lines: [ln], lastAt: at });
+      });
+
+      body += '<div class="tr">' + groups.map(function (g) {
+        var first = g.lines[0];
+        var at = '';
+        var p = Date.parse(first.time);
+        if (base != null && !isNaN(p)) {
+          var off = Math.max(0, Math.round((p - base) / 1000));
+          at = Math.floor(off / 60) + ':' + (off % 60 < 10 ? '0' : '') + (off % 60);
+        }
+        var nm = g.who || (g.role === 'agent' ? 'Agent' : 'Caller');
+        return '<div class="grp ' + g.role + '">' +
+          '<div class="av" aria-hidden="true">' + esc(initials(nm)) + '</div>' +
+          '<div><div class="head"><span class="nm">' + esc(nm) + '</span>' +
+          '<span class="rl">' + (g.role === 'agent' ? 'Team' : 'Caller') + '</span>' +
+          (at ? '<span class="at">' + esc(at) + '</span>' : '') + '</div>' +
+          g.lines.map(function (l) {
+            return '<p>' + esc(String(l.content || l.text || l.transcript || '').trim()) + '</p>';
+          }).join('') +
+          '</div></div>';
+      }).join('') + '</div>';
+    }
+
+    if (moments.length) {
+      body += '<div class="tags"><div class="h">Dialpad AI flagged</div>' +
+        moments.map(function (m) { return '<span class="chip">' + esc(m) + '</span>'; }).join('') +
+        '</div>';
+    }
+    if (!body) return '<div class="note">No transcript for this call.</div>';
+    return body;
   }
 
   // ── wiring ────────────────────────────────────────────────────────────────
   $('#apply').addEventListener('click', function () { loadCalls(true); });
-  $('#back').addEventListener('click', function () { $('#app').setAttribute('data-view', 'list'); });
+  $('#back').addEventListener('click', function () {
+    releaseAudio();
+    $('#app').setAttribute('data-view', 'list');
+  });
   ['from', 'to'].forEach(function (id) {
     $('#' + id).addEventListener('keydown', function (e) { if (e.key === 'Enter') loadCalls(true); });
   });
@@ -504,6 +787,15 @@
         '<div class="msg">Open this from inside Eesa — it needs a signed-in session.</div></div>';
     }
   }, 4000);
+
+  // Exposed for the offline render harness (scripts/render-harness.mjs); the
+  // browser never touches this.
+  var __exports = {
+    renderDetail: renderDetail, fmtDur: fmtDur, timings: timings,
+    transcriptBody: transcriptBody, recordingBody: recordingBody,
+    recordingsOf: recordingsOf, card: card, fmtTime: fmtTime
+  };
+  if (typeof module !== 'undefined' && module.exports) module.exports = __exports;
 })();
 </script>
 </body>
