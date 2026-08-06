@@ -94,6 +94,19 @@
     font: inherit; font-size: 15px; padding: 10px 11px; color: var(--ink); width: 100%;
     background: var(--sunk); border: 1px solid var(--line); border-radius: 10px; min-height: 44px;
   }
+  .toolbar { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .toolbar input[type="search"], .toolbar select {
+    width: 100%; padding: 0 12px; min-height: 40px; font: inherit; font-size: 14px;
+    color: var(--ink); background: var(--sunk); border: 1px solid var(--line); border-radius: 10px;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    padding: 5px 11px; font-size: 12.5px; font-weight: 600; border-radius: 999px;
+    background: var(--sunk); border: 1px solid var(--line); color: var(--ink-2);
+  }
+  .chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  .chip .n { opacity: .65; font-weight: 500; margin-left: 4px; }
+  .count { padding: 8px 16px; font-size: 12.5px; color: var(--ink-3); border-bottom: 1px solid var(--line); }
   .filters .apply { padding: 0 18px; min-height: 44px; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 10px; font-size: 14px; font-weight: 600; flex: 0 0 auto; }
   .filters .apply:hover { filter: brightness(1.06); }
 
@@ -133,6 +146,10 @@
   .detail-body { overflow-y: auto; overflow-x: hidden; padding: 20px; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 18px; -webkit-overflow-scrolling: touch; }
   @media (max-width: 820px) { .detail-body { padding: 16px; } }
 
+  /* Flex children default to flex-shrink:1, so in this scrolling column the
+     cards were squashed to fit the viewport instead of the column scrolling —
+     the CALL row and AI RECAP were visibly sliced in half. Pin them. */
+  .detail-body > * { flex: 0 0 auto; }
   .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
   .card > h3 { margin: 0; padding: 12px 16px; font-size: 11.5px; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--line); font-weight: 650; }
   .card .body { padding: 16px; }
@@ -149,7 +166,10 @@
   .fact span { font-size: 15px; word-break: break-word; }
 
   /* ── transcript: the main content ──────────────────────────────────── */
-  .tr { display: flex; flex-direction: column; gap: 16px; }
+  /* A long call produced a card taller than the screen. Cap it and scroll
+     inside; the cap is generous so short calls are unaffected. */
+  .tr { display: flex; flex-direction: column; gap: 16px; max-height: 58vh; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-right: 4px; }
+  .recap { max-height: 34vh; overflow-y: auto; }
   .grp { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 12px; }
   .av { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
         font-size: 12.5px; font-weight: 650; letter-spacing: .01em; }
@@ -205,6 +225,19 @@
           <label>From<input type="date" id="from" /></label>
           <label>To<input type="date" id="to" /></label>
           <button class="apply" id="apply">Apply</button>
+        </div>
+        <div class="toolbar">
+          <input type="search" id="q" placeholder="Search name or number…" aria-label="Search calls" />
+          <div class="chips" id="dirChips">
+            <button class="chip" data-f="all" aria-pressed="true">All<span class="n" id="n-all"></span></button>
+            <button class="chip" data-f="inbound" aria-pressed="false">Received<span class="n" id="n-inbound"></span></button>
+            <button class="chip" data-f="outbound" aria-pressed="false">Outgoing<span class="n" id="n-outbound"></span></button>
+            <button class="chip" data-f="missed" aria-pressed="false">Missed<span class="n" id="n-missed"></span></button>
+            <button class="chip" data-f="recorded" aria-pressed="false">Recorded<span class="n" id="n-recorded"></span></button>
+          </div>
+          <select id="member" aria-label="Filter by team member">
+            <option value="">All team members</option>
+          </select>
         </div>
       </div>
       <div class="rows" id="rows">
@@ -488,11 +521,61 @@
 
   // ── list ────────────────────────────────────────────────────────────────
   var cursor = null, loading = false, calls = [], selectedId = null;
+  var dirFilter = 'all', query = '', member = '';
+
+  // Pages pulled before first paint.
+  //
+  // Dialpad's call API has no server-side search and no phone filter, so every
+  // control in the toolbar filters what we already hold. With a single page
+  // that made search look broken and most filters read empty — you were
+  // searching one screen of calls. Three pages is the compromise: enough for
+  // the filters to mean something, few enough to stay fast.
+  var INITIAL_PAGES = 3;
+  var DEFAULT_DAYS = 30;
 
   function toMs(dateStr) {
     if (!dateStr) return undefined;
     var t = Date.parse(dateStr + 'T00:00:00');
     return isNaN(t) ? undefined : t;
+  }
+  /** Local YYYY-MM-DD. NOT toISOString(), which converts to UTC first and so
+   *  reports tomorrow's date all evening in a negative-offset zone. */
+  function ymd(d) {
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+
+  function memberOf(c) { return (c && c.target && c.target.name) || ''; }
+
+  /**
+   * Does this call survive the current toolbar?
+   *
+   * Pure, and used for BOTH the rows and the per-chip counts, so a count can
+   * never disagree with the list underneath it. `dir` is passed in rather than
+   * read from state precisely so the counts can ask "what would this chip
+   * show?" without mutating anything.
+   */
+  function matches(c, dir) {
+    if (!c) return false;
+    var d = directionOf(c);
+    // "Recorded" is a property, not a direction — it cuts across the other three.
+    if (dir === 'recorded') { if (!c.was_recorded) return false; }
+    else if (dir !== 'all' && d !== dir) return false;
+    if (member && memberOf(c) !== member) return false;
+    if (query) {
+      // Someone typing a number with spaces or brackets should still match the
+      // raw E.164 the API stores.
+      var digits = query.replace(/[^0-9]/g, '');
+      if (digits.length >= 3 &&
+          numberOf(c).replace(/[^0-9]/g, '').indexOf(digits) !== -1) return true;
+      var hay = (nameOf(c) + ' ' + numberOf(c) + ' ' + memberOf(c)).toLowerCase();
+      if (hay.indexOf(query) === -1) return false;
+    }
+    return true;
+  }
+  function visibleCalls() {
+    return calls.filter(function (c) { return matches(c, dirFilter); });
   }
 
   async function loadCalls(reset) {
@@ -508,27 +591,81 @@
     if (to) args.started_before = to + 86400000; // inclusive of the "to" day
 
     try {
-      var data = await invoke('call_list', args);
-      var items = (data && (data.items || data.calls)) || [];
-      cursor = (data && data.cursor) || null;
-      calls = calls.concat(items);
-      renderList();
+      // On a reset, pull several pages before painting. Each is a round trip
+      // through Eesa to Dialpad, so they are sequential by necessity (the
+      // cursor for page N+1 only exists once page N returns) — but doing it
+      // here, once, beats the user pressing "Load more" three times and waiting
+      // for each.
+      var pages = reset ? INITIAL_PAGES : 1;
+      for (var i = 0; i < pages; i++) {
+        args.cursor = cursor || undefined;
+        var data = await invoke('call_list', args);
+        var items = (data && (data.items || data.calls)) || [];
+        cursor = (data && data.cursor) || null;
+        calls = calls.concat(items);
+        // Paint the first page immediately; the rest fill in behind it, so the
+        // list is usable while the deeper pages land.
+        renderList();
+        if (!cursor || !items.length) break;
+      }
     } catch (e) {
-      renderListError(e);
+      // Pages already in hand are worth keeping — a failure on page 3 should
+      // not blank the two that worked.
+      if (calls.length) renderList(); else renderListError(e);
     } finally {
       loading = false;
     }
   }
 
+  /** Chip counts + the team-member list, both derived from what is loaded. */
+  function renderToolbar() {
+    ['all', 'inbound', 'outbound', 'missed', 'recorded'].forEach(function (f) {
+      var n = calls.filter(function (c) { return matches(c, f); }).length;
+      var el = document.getElementById('n-' + f);
+      if (el) el.textContent = calls.length ? ' ' + n : '';
+    });
+    // Only offer members who actually appear in the loaded calls — a dropdown
+    // of names that select nothing is worse than no dropdown.
+    var sel = $('#member');
+    var names = {};
+    calls.forEach(function (c) { var m = memberOf(c); if (m) names[m] = 1; });
+    var list = Object.keys(names).sort(function (a, b) {
+      return a.localeCompare(b, undefined, { sensitivity: 'base' });
+    });
+    var want = '<option value="">All team members</option>' +
+      list.map(function (n) {
+        return '<option value="' + esc(n) + '">' + esc(n) + '</option>';
+      }).join('');
+    // Rebuilding on every page would drop the open dropdown and the selection.
+    if (sel.getAttribute('data-sig') !== list.join('|')) {
+      sel.setAttribute('data-sig', list.join('|'));
+      sel.innerHTML = want;
+      sel.value = member;
+    }
+    sel.parentNode.classList.toggle('hidden', list.length < 2);
+  }
+
   function renderList() {
     var rows = $('#rows');
-    if (!calls.length) {
+    renderToolbar();
+    var shown = visibleCalls();
+    if (!shown.length) {
+      // "Nothing here" and "nothing MATCHES" are different answers, and telling
+      // a user their workspace has no calls when they have simply typed a
+      // filter is how a dashboard loses trust.
+      var filtered = calls.length > 0;
       rows.innerHTML = '<div class="state">' +
         '<svg viewBox="0 0 24 24" fill="none"><path d="M4 5h16v11H8l-4 3V5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>' +
-        '<div class="msg">No calls in this range yet.</div></div>';
+        '<div class="msg">' + (filtered
+          ? 'No calls match these filters. ' + calls.length + ' loaded.'
+          : 'No calls in this range yet.') + '</div>' +
+        (filtered ? '<button class="more" id="clearF">Clear filters</button>' : '') +
+        '</div>';
+      var cf = rows.querySelector('#clearF');
+      if (cf) cf.addEventListener('click', clearFilters);
       return;
     }
-    var html = calls.map(function (c) {
+    var html = shown.map(function (c) {
       var dir = directionOf(c);
       var id = c.call_id || c.id;
       var t = timings(c);
@@ -542,6 +679,11 @@
         '<span>' + (c.was_recorded ? '<i class="rec" title="Recorded"></i>' : '') + esc(dur) + '</span></span>' +
         '</button>';
     }).join('');
+    // Say what is being counted. With filters on, "Load more" fetching calls
+    // that are then filtered out looks like a broken button, so name the gap.
+    if (shown.length !== calls.length) {
+      html = '<div class="count">' + shown.length + ' of ' + calls.length + ' loaded calls</div>' + html;
+    }
     if (cursor) html += '<button class="more" id="more">Load more</button>';
     rows.innerHTML = html;
 
@@ -550,6 +692,16 @@
     });
     var more = rows.querySelector('#more');
     if (more) more.addEventListener('click', function () { more.disabled = true; more.textContent = 'Loading…'; loadCalls(false); });
+  }
+
+  function clearFilters() {
+    dirFilter = 'all'; query = ''; member = '';
+    $('#q').value = '';
+    $('#member').value = '';
+    Array.prototype.forEach.call(document.querySelectorAll('#dirChips .chip'), function (b) {
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-f') === 'all'));
+    });
+    renderList();
   }
 
   function renderListError(e) {
@@ -621,12 +773,19 @@
     // noise, so an absent recap renders nothing at all.
     if (recapR && recapR.status === 'fulfilled' && recapR.value) {
       var recap = recapR.value;
-      var summary = recap.summary ||
-                    (Array.isArray(recap.summaries) ? recap.summaries.join('\n') : '') ||
-                    (Array.isArray(recap.purposes) ? recap.purposes.join('\n') : '');
+      // Dialpad wraps recap text in objects: summary is {content:"..."} and
+      // action_items are [{content:"..."}]. Reading .text/.name printed
+      // "[object Object]" for the summary and dropped every action item.
+      var flat = function (v) {
+        if (v == null) return "";
+        if (typeof v === "string") return v;
+        if (Array.isArray(v)) return v.map(flat).filter(Boolean).join(String.fromCharCode(10));
+        if (typeof v === "object") return flat(v.content || v.text || v.name || v.summary || "");
+        return String(v);
+      };
+      var summary = flat(recap.summary) || flat(recap.summaries) || flat(recap.purposes);
       var actions = (Array.isArray(recap.action_items) ? recap.action_items : [])
-        .map(function (a) { return typeof a === 'string' ? a : (a && (a.text || a.name)) || ''; })
-        .filter(Boolean);
+        .map(flat).filter(Boolean);
       parts.push(card('AI recap',
         (summary ? '<div class="recap">' + esc(summary) + '</div>' : '') +
         (actions.length
@@ -779,6 +938,41 @@
     $('#' + id).addEventListener('keydown', function (e) { if (e.key === 'Enter') loadCalls(true); });
   });
 
+  // Show the range the list is ACTUALLY on. The boxes were left empty while
+  // data loaded, so the page said "no range" while showing a bounded one —
+  // and there was no way to tell what you were looking at.
+  (function prefillDates() {
+    var to = new Date(), from = new Date();
+    from.setDate(from.getDate() - DEFAULT_DAYS);
+    if (!$('#from').value) $('#from').value = ymd(from);
+    if (!$('#to').value) $('#to').value = ymd(to);
+  })();
+
+  // Search. Debounced because filtering re-renders the whole list, and this
+  // fires on every keystroke.
+  var qTimer = null;
+  $('#q').addEventListener('input', function (e) {
+    var v = String(e.target.value || '').trim().toLowerCase();
+    clearTimeout(qTimer);
+    qTimer = setTimeout(function () { query = v; renderList(); }, 140);
+  });
+
+  // Direction / recorded chips — single-select, so they read as one question.
+  $('#dirChips').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.chip') : null;
+    if (!b) return;
+    dirFilter = b.getAttribute('data-f') || 'all';
+    Array.prototype.forEach.call(this.querySelectorAll('.chip'), function (x) {
+      x.setAttribute('aria-pressed', String(x === b));
+    });
+    renderList();
+  });
+
+  $('#member').addEventListener('change', function (e) {
+    member = e.target.value || '';
+    renderList();
+  });
+
   // If the shell never sends a session (opened standalone / dev), say so.
   setTimeout(function () {
     if (!booted) {
@@ -793,7 +987,9 @@
   var __exports = {
     renderDetail: renderDetail, fmtDur: fmtDur, timings: timings,
     transcriptBody: transcriptBody, recordingBody: recordingBody,
-    recordingsOf: recordingsOf, card: card, fmtTime: fmtTime
+    recordingsOf: recordingsOf, card: card, fmtTime: fmtTime,
+    matches: matches, memberOf: memberOf, ymd: ymd, directionOf: directionOf,
+    nameOf: nameOf, numberOf: numberOf
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = __exports;
 })();
