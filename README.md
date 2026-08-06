@@ -90,10 +90,41 @@ The **Dialpad key is per-tenant** and arrives in a header — it is never an env
 ```bash
 cp .env.example .env      # optionally set MCP_SIGNING_SECRET
 npm install
-npm run check             # syntax-compile every source file
+npm run check             # syntax-compile every source file + render the UI offline
 npm start                 # listens on :8080
 curl localhost:8080/health
 ```
+
+`npm run check` also runs `scripts/render-harness.mjs`, which loads
+`public/app.html`, shims a minimal DOM and renders the call-detail pane against
+fixtures whose shapes are copied from live Dialpad responses. It asserts the
+things that have actually broken before — millisecond durations, real transcript
+offsets, AI "moments" not appearing as speech, and no card ever rendering as a
+bare header. No browser, Dialpad key or deploy needed.
+
+## The embedded UI (`/app`) and call recordings
+
+`public/app.html` is the conversation-history surface Eesa frames at
+`/plugins/dialpad/app`. It holds **no credential**: it receives a short-lived
+UI-session token over `postMessage` and reads through Eesa's gateway.
+
+Recording audio is the one thing it cannot fetch itself, and the reason is worth
+recording because the three URL keys Dialpad returns are *not* equivalent:
+
+| Key | Example | API key (`Bearer`) can fetch it? |
+| --- | --- | --- |
+| `recording_url`, `recording_details[].url` | `dialpad.com/r/<id>` | **Yes** — 302 → `/secureblob/…` → `/blob-server/…` → `200 audio/mpeg`, and `Range` is honoured (`206`, `Content-Range`) |
+| `admin_recording_urls` | `dialpad.com/blob/adminrecording/<id>.mp3` | **No** — 302s to `/login` even *with* a valid key. Browser session only. |
+
+So the first kind is streamed inline through Eesa's
+`GET /api/v1/gateway/plugin-ui-media/recording/?call_id=…`, which holds the
+tenant's key server-side, applies the same Dialpad role gate as the agent, and
+supports range requests. The second kind cannot be fetched by any server, so it
+stays a link-out and the UI says why instead of showing a player that can't work.
+
+Note that the intermediate redirect Dialpad issues carries the tenant's **raw API
+key in a query string** — that URL is followed server-side only and must never be
+handed to a browser or written to a log.
 
 To exercise a tool locally you simulate the platform headers
 (`X-Mcp-Tenant-Cred-Api-Key: <a Dialpad key>`, plus a valid `X-Mcp-Signature`

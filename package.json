@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node src/server.js",
     "gen": "node scripts/generate-tools.mjs",
-    "check": "node --check src/server.js && node --check src/auth.js && node --check src/dialpad.js && node --check src/mcp.js && node --check src/tools.generated.js"
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/dialpad.js && node --check src/mcp.js && node --check src/tools.generated.js && node scripts/render-harness.mjs"
   },
   "dependencies": {
     "express": "^4.19.2"
