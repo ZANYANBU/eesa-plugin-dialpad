@@ -293,7 +293,7 @@
       : (ev.origin && ev.origin !== window.location.origin ? ev.origin : EESA_FALLBACK);
     TOKEN = m.token;
     if (m.theme) document.documentElement.setAttribute('data-theme', m.theme);
-    if (!booted) { booted = true; loadCalls(true); }
+    if (!booted) { booted = true; primeDateRange(); loadCalls(true); }
   });
   // Tell the shell we're ready to receive the token.
   try { parent.postMessage({ type: 'eesa:plugin-ready' }, '*'); } catch (e) {}
@@ -532,6 +532,28 @@
   // the filters to mean something, few enough to stay fast.
   var INITIAL_PAGES = 3;
   var DEFAULT_DAYS = 30;
+
+  // Default the filter to the LAST 7 DAYS, rather than opening on every call
+  // this account has ever made. At ~114 calls/day an unbounded first load is
+  // both slow and useless — you are almost always looking for something recent,
+  // and anything older is one date edit away.
+  //
+  // Built from LOCAL date parts on purpose. `toISOString().slice(0,10)` is UTC,
+  // so for anyone west of Greenwich it hands back yesterday and the range is
+  // silently off by a day — which is exactly the kind of bug nobody reports,
+  // they just quietly distrust the board.
+  function ymdLocal(d) {
+    var m = d.getMonth() + 1, day = d.getDate();
+    return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+  }
+  function primeDateRange() {
+    var to = new Date(), from = new Date();
+    from.setDate(from.getDate() - 6);            // 7 days inclusive of today
+    // Never overwrite a value the person typed, and never fight the browser
+    // restoring a previous entry on reload.
+    if (!$('#from').value) $('#from').value = ymdLocal(from);
+    if (!$('#to').value) $('#to').value = ymdLocal(to);
+  }
 
   function toMs(dateStr) {
     if (!dateStr) return undefined;
