@@ -88,6 +88,8 @@
   .list-head { padding: 16px 18px 14px; border-bottom: 1px solid var(--line); }
   .list-head h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
   .list-head p { margin: 3px 0 0; color: var(--ink-3); font-size: 13px; }
+  .range-note { margin: 6px 0 0; font-size: 12px; color: #6b7280; }
+
   .filters { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; align-items: flex-end; }
   .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; color: var(--ink-3); letter-spacing: .03em; text-transform: uppercase; flex: 1 1 130px; min-width: 0; }
   .filters input {
@@ -226,6 +228,10 @@
           <label>To<input type="date" id="to" /></label>
           <button class="apply" id="apply">Apply</button>
         </div>
+        <!-- Only appears when we had to narrow the window Dialpad was asked
+             for. Showing one range in the boxes while listing another is worse
+             than the error it replaced. -->
+        <p id="rangeNote" class="range-note" style="display:none"></p>
         <div class="toolbar">
           <input type="search" id="q" placeholder="Search name or number…" aria-label="Search calls" />
           <div class="chips" id="dirChips">
@@ -531,7 +537,6 @@
   // searching one screen of calls. Three pages is the compromise: enough for
   // the filters to mean something, few enough to stay fast.
   var INITIAL_PAGES = 3;
-  var DEFAULT_DAYS = 30;
 
   // Default the filter to the LAST 7 DAYS, rather than opening on every call
   // this account has ever made. At ~114 calls/day an unbounded first load is
@@ -609,8 +614,46 @@
 
     var args = { cursor: cursor || undefined };
     var from = toMs($('#from').value), to = toMs($('#to').value);
-    if (from) args.started_after = from;
-    if (to) args.started_before = to + 86400000; // inclusive of the "to" day
+
+    // Dialpad enforces three rules on this window, and the board broke all of
+    // them at once — it opened on an error rather than a call list:
+    //
+    //   span  <= 2592000000ms (30 days, hard)   -> "Timestamp range must be
+    //                                              smaller than 2592000000ms."
+    //   started_before <= now (seconds of slack) -> "Timestamp range cannot be
+    //                                              in the future."
+    //   started_before >  started_after          -> "Upper timestamp must be
+    //                                              larger than lower timestamp."
+    //
+    // A 30-day default plus the +1 day below made the wire span exactly 31
+    // days, and "to = today" plus that same +1 day put the upper bound up to
+    // 24h into the future. Both had to be wrong for the page to load at all.
+    var MAX_SPAN_MS = 2592000000;
+    var nowMs = Date.now() - 60000;   // slack: +10s already 400s, and a
+                                      // browser clock is not a source of truth.
+
+    var before = (to !== undefined) ? to + 86400000 : nowMs;  // include the "to" day...
+    if (before > nowMs) before = nowMs;                       // ...but never the future.
+
+    var after = from;
+    if (after === undefined || before - after > MAX_SPAN_MS) after = before - MAX_SPAN_MS;
+    if (after >= before) after = before - MAX_SPAN_MS;        // a backwards range is a 400 too
+
+    args.started_after = after;
+    args.started_before = before;
+
+    // Say so when we narrowed what was asked for. Quietly returning a
+    // different range than the date boxes show is how a board stops being
+    // believed.
+    var clamped = (from !== undefined && after > from);
+    var note = $('#rangeNote');
+    if (note) {
+      note.textContent = clamped
+        ? 'Dialpad serves 30 days at a time — showing ' + ymd(new Date(after)) +
+          ' to ' + ymd(new Date(before - 1))
+        : '';
+      note.style.display = clamped ? '' : 'none';
+    }
 
     try {
       // On a reset, pull several pages before painting. Each is a round trip
@@ -960,15 +1003,11 @@
     $('#' + id).addEventListener('keydown', function (e) { if (e.key === 'Enter') loadCalls(true); });
   });
 
-  // Show the range the list is ACTUALLY on. The boxes were left empty while
-  // data loaded, so the page said "no range" while showing a bounded one —
-  // and there was no way to tell what you were looking at.
-  (function prefillDates() {
-    var to = new Date(), from = new Date();
-    from.setDate(from.getDate() - DEFAULT_DAYS);
-    if (!$('#from').value) $('#from').value = ymd(from);
-    if (!$('#to').value) $('#to').value = ymd(to);
-  })();
+  // NOTE: the seven-day default lives in primeDateRange(), called from the
+  // boot handler. A second prefill used to sit here and ran synchronously
+  // during script parse, so it always won the `if (!value)` race and
+  // primeDateRange() could never do anything — the 7-day default shipped in
+  // PR #9 was dead on arrival. One default, one place.
 
   // Search. Debounced because filtering re-renders the whole list, and this
   // fires on every keystroke.
