@@ -892,7 +892,14 @@
       var out = await invoke('dialpad_call_feedback', {
         // Ask for everything and filter client-side — otherwise flipping the
         // chip would cost a second full analysis of the same calls.
-        days_back: fbState.days, sentiment: 'all'
+        days_back: fbState.days, sentiment: 'all',
+        // The server drops a request that runs past ~30s, and this analysis is
+        // roughly 0.85s per call: an uncapped window hit 33s and died with a
+        // 500 that looked like a bug rather than a timeout. 25 lands near 22s.
+        // It reads the NEWEST calls in the window, which is where the signal
+        // is — measured against the same window, 15 and 30 returned identical
+        // findings because Dialpad emits several legs per conversation.
+        limit: 25
       });
       var neg = (out && out.negative_feedback) || [];
       var pos = (out && out.positive_feedback) || [];
@@ -901,8 +908,12 @@
       fbState.items = neg.concat(pos);
       fbState.analyzed = out && out.analyzed_calls;
       var c = (out && out.counts) || {};
+      // Name the scope actually scanned. Claiming the whole window when only
+      // the newest 25 calls were read is the kind of quiet overstatement that
+      // makes a dashboard untrustworthy.
       $('#fbCounts').textContent = (c.negative || 0) + ' negative · ' + (c.positive || 0) +
-        ' positive · ' + (c.neutral || 0) + ' neutral · ' + (fbState.analyzed || 0) + ' analysed';
+        ' positive · ' + (c.neutral || 0) + ' neutral · newest ' +
+        (fbState.analyzed || 0) + ' calls in ' + fbState.days + 'd';
       $('#fbCounts').style.display = '';
     } catch (e) {
       fbState.items = []; fbState.analyzed = null;
