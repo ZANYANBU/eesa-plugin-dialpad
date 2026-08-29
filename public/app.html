@@ -102,6 +102,29 @@
     color: var(--ink); background: var(--sunk); border: 1px solid var(--line); border-radius: 10px;
   }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  /* Tabs — two ways into the same detail pane, so they sit above the title
+     rather than looking like two separate screens. */
+  .tabs { display: flex; gap: 2px; margin: 0 0 10px; }
+  .tab {
+    padding: 6px 12px; font-size: 13px; font-weight: 600; font-family: inherit;
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--ink-2); cursor: pointer;
+  }
+  .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+
+  .fb-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+  .fb-row { align-items: flex-start; gap: 10px; }
+  /* A severity stripe rather than a coloured card: the list is scanned, and a
+     dot reads at a glance without turning every row into a warning banner. */
+  .fb-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 999px; margin-top: 6px; }
+  .fb-dot[data-tone="negative"] { background: #b42318; }
+  .fb-dot[data-tone="positive"] { background: #067647; }
+  .fb-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; text-align: left; }
+  .fb-top { display: flex; gap: 8px; align-items: baseline; font-weight: 600; font-size: 13px; }
+  .fb-when { font-weight: 400; font-size: 11.5px; color: var(--ink-2); }
+  .fb-text { font-size: 13px; line-height: 1.45; }
+  .fb-why { font-size: 11.5px; color: var(--ink-2); line-height: 1.4; }
+
   .chip {
     padding: 5px 11px; font-size: 12.5px; font-weight: 600; border-radius: 999px;
     background: var(--sunk); border: 1px solid var(--line); color: var(--ink-2);
@@ -221,7 +244,15 @@
     <!-- LIST -->
     <section class="list">
       <div class="list-head">
-        <h1>Conversation history</h1>
+        <!-- Two ways into the SAME detail pane on the right. Feedback is not a
+             separate screen with its own player and transcript — it is a
+             different way of choosing which call to open, so a complaint is one
+             click from the recording that proves it. -->
+        <div class="tabs" id="tabs" role="tablist">
+          <button class="tab" data-tab="history" role="tab" aria-selected="true">Conversation history</button>
+          <button class="tab" data-tab="feedback" role="tab" aria-selected="false">Call feedback</button>
+        </div>
+        <h1 id="paneTitle">Conversation history</h1>
         <p id="sub">Calls, transcripts and recordings</p>
         <div class="filters">
           <label>From<input type="date" id="from" /></label>
@@ -232,6 +263,24 @@
              for. Showing one range in the boxes while listing another is worse
              than the error it replaced. -->
         <p id="rangeNote" class="range-note" style="display:none"></p>
+        <!-- Feedback reads every call in the window and runs sentiment over
+             them: seconds of work and real cost per run. So it is never
+             automatic — the window is picked, then Analyse is pressed. -->
+        <div class="fb-controls" id="fbControls" style="display:none">
+          <div class="chips" id="fbDays">
+            <button class="chip" data-d="1" aria-pressed="false">Today</button>
+            <button class="chip" data-d="3" aria-pressed="true">3 days</button>
+            <button class="chip" data-d="7" aria-pressed="false">7 days</button>
+            <button class="chip" data-d="14" aria-pressed="false">14 days</button>
+          </div>
+          <div class="chips" id="fbSent">
+            <button class="chip" data-s="negative" aria-pressed="true">Negative</button>
+            <button class="chip" data-s="positive" aria-pressed="false">Positive</button>
+            <button class="chip" data-s="all" aria-pressed="false">All</button>
+          </div>
+          <button class="apply" id="fbRun">Analyse</button>
+          <p id="fbCounts" class="range-note" style="display:none"></p>
+        </div>
         <div class="toolbar">
           <input type="search" id="q" placeholder="Search name or number…" aria-label="Search calls" />
           <div class="chips" id="dirChips">
@@ -779,6 +828,109 @@
   }
 
   // ── detail ────────────────────────────────────────────────────────────────
+  // ── Call feedback ───────────────────────────────────────────────────────
+  // dialpad_call_feedback is an EESA-side tool, not one of this plugin's: the
+  // gateway dispatches it through the platform's own registry and it runs as
+  // the signed-in user. It reads each call's AI recap and transcript and
+  // classifies sentiment, so it is slow and costs money — hence a button, and
+  // never a poll.
+  var fbState = { days: 3, sentiment: 'negative', items: [], loaded: false, loading: false };
+
+  function fbRender() {
+    var rows = $('#rows');
+    if (fbState.loading) {
+      rows.innerHTML = '<div class="state"><div class="spin"></div>' +
+        '<div class="msg">Reading calls and their transcripts…</div></div>';
+      return;
+    }
+    if (!fbState.loaded) {
+      rows.innerHTML = '<div class="state"><div class="msg">' +
+        'Pick a window and press Analyse.</div></div>';
+      return;
+    }
+    var shown = fbState.sentiment === 'all'
+      ? fbState.items
+      : fbState.items.filter(function (i) { return i._tone === fbState.sentiment; });
+    if (!shown.length) {
+      // "None found" and "nothing analysed" are different answers; saying the
+      // first when the second is true reads as an all-clear nobody earned.
+      var msg = fbState.analyzed
+        ? 'No ' + (fbState.sentiment === 'all' ? '' : fbState.sentiment + ' ') +
+          'calls in this window — ' + fbState.analyzed + ' were analysed.'
+        : 'No calls found in this window at all, so there was nothing to judge.';
+      rows.innerHTML = '<div class="state"><div class="msg">' + esc(msg) + '</div></div>';
+      return;
+    }
+    rows.innerHTML = shown.map(function (it) {
+      var tone = it._tone || 'negative';
+      return '<button class="row fb-row" data-id="' + esc(it.call_id) + '" ' +
+        'data-tone="' + esc(tone) + '" role="option" aria-selected="false">' +
+        '<span class="fb-dot" data-tone="' + esc(tone) + '"></span>' +
+        '<span class="fb-main">' +
+          '<span class="fb-top">' + esc(it.call || 'Call') +
+            '<span class="fb-when">' + esc(fmtTime(it.when)) + '</span></span>' +
+          '<span class="fb-text">' + esc(it.feedback || '') + '</span>' +
+          (it.reason ? '<span class="fb-why">' + esc(it.reason) + '</span>' : '') +
+        '</span>' +
+      '</button>';
+    }).join('');
+    Array.prototype.forEach.call(rows.querySelectorAll('.fb-row'), function (b) {
+      b.addEventListener('click', function () {
+        // Straight into the existing detail pane: same recording player, same
+        // transcript, same recap. Feedback only chooses WHICH call to open.
+        openCall(b.getAttribute('data-id'));
+      });
+    });
+  }
+
+  async function fbRun() {
+    if (fbState.loading) return;
+    fbState.loading = true; fbState.loaded = true;
+    $('#fbCounts').style.display = 'none';
+    fbRender();
+    try {
+      var out = await invoke('dialpad_call_feedback', {
+        // Ask for everything and filter client-side — otherwise flipping the
+        // chip would cost a second full analysis of the same calls.
+        days_back: fbState.days, sentiment: 'all'
+      });
+      var neg = (out && out.negative_feedback) || [];
+      var pos = (out && out.positive_feedback) || [];
+      neg.forEach(function (i) { i._tone = 'negative'; });
+      pos.forEach(function (i) { i._tone = 'positive'; });
+      fbState.items = neg.concat(pos);
+      fbState.analyzed = out && out.analyzed_calls;
+      var c = (out && out.counts) || {};
+      $('#fbCounts').textContent = (c.negative || 0) + ' negative · ' + (c.positive || 0) +
+        ' positive · ' + (c.neutral || 0) + ' neutral · ' + (fbState.analyzed || 0) + ' analysed';
+      $('#fbCounts').style.display = '';
+    } catch (e) {
+      fbState.items = []; fbState.analyzed = null;
+      fbState.loading = false;
+      $('#rows').innerHTML = '<div class="state"><div class="msg">' +
+        esc(e.message || 'Could not analyse calls.') + '</div></div>';
+      return;
+    }
+    fbState.loading = false;
+    fbRender();
+  }
+
+  function setTab(name) {
+    var isFb = name === 'feedback';
+    Array.prototype.forEach.call(document.querySelectorAll('#tabs .tab'), function (b) {
+      b.setAttribute('aria-selected', String(b.getAttribute('data-tab') === name));
+    });
+    $('#paneTitle').textContent = isFb ? 'Call feedback' : 'Conversation history';
+    $('#sub').textContent = isFb
+      ? 'What customers said on the phone, and the call that proves it'
+      : 'Calls, transcripts and recordings';
+    $('#fbControls').style.display = isFb ? '' : 'none';
+    ['#q', '#dirChips'].forEach(function (sel) {
+      var el = $(sel); if (el) el.style.display = isFb ? 'none' : '';
+    });
+    if (isFb) fbRender(); else renderList();
+  }
+
   async function openCall(id) {
     selectedId = id;
     releaseAudio();
@@ -1028,6 +1180,34 @@
     });
     renderList();
   });
+
+  // Tabs, and the feedback controls. Same single-select chip idiom as above so
+  // the two lists read as one screen rather than two bolted together.
+  $('#tabs').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.tab') : null;
+    if (b) setTab(b.getAttribute('data-tab'));
+  });
+  $('#fbDays').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.chip') : null;
+    if (!b) return;
+    fbState.days = parseInt(b.getAttribute('data-d'), 10) || 3;
+    Array.prototype.forEach.call(this.querySelectorAll('.chip'), function (x) {
+      x.setAttribute('aria-pressed', String(x === b));
+    });
+  });
+  $('#fbSent').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.chip') : null;
+    if (!b) return;
+    fbState.sentiment = b.getAttribute('data-s') || 'negative';
+    Array.prototype.forEach.call(this.querySelectorAll('.chip'), function (x) {
+      x.setAttribute('aria-pressed', String(x === b));
+    });
+    // Changing the filter re-renders what is already loaded; it does NOT
+    // re-run. Another run is another LLM pass over the whole window, so
+    // Analyse stays the only thing that spends money.
+    if (fbState.loaded && !fbState.loading) fbRender();
+  });
+  $('#fbRun').addEventListener('click', fbRun);
 
   $('#member').addEventListener('change', function (e) {
     member = e.target.value || '';
