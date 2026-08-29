@@ -293,6 +293,12 @@
                far back to reach is the choice that actually changes the
                result. -->
           <div class="fb-group">
+            <span class="fb-label">Dates</span>
+            <label class="fb-date">From<input type="date" id="fbFrom" /></label>
+            <label class="fb-date">To<input type="date" id="fbTo" /></label>
+            <button class="chip" id="fbClearDates" type="button">Clear</button>
+          </div>
+          <div class="fb-group">
             <span class="fb-label">Depth</span>
           <div class="chips" id="fbDays">
             <button class="chip" data-d="25" aria-pressed="true">Last 25 calls</button>
@@ -868,6 +874,21 @@
   // for; now only a window never analysed costs anything.
   var fbState = { depth: 25, sentiment: 'negative', items: [], loaded: false, loading: false, cache: {} };
 
+  // Dates as epoch ms. `To` covers the WHOLE chosen day — a plain date parses
+  // to midnight, so picking the same day for From and To would otherwise
+  // select a zero-length window and quietly return nothing.
+  function fbDates() {
+    var f = ($('#fbFrom') || {}).value, t = ($('#fbTo') || {}).value;
+    return {
+      from: f ? Date.parse(f + 'T00:00:00') : undefined,
+      to: t ? Date.parse(t + 'T23:59:59') : undefined
+    };
+  }
+  function fbCacheKey() {
+    var d = fbDates();
+    return fbState.depth + ':' + (d.from || '') + ':' + (d.to || '');
+  }
+
   function fbRender() {
     var rows = $('#rows');
     if (fbState.loading) {
@@ -921,13 +942,18 @@
     $('#fbCounts').style.display = 'none';
     fbRender();
     try {
+      var d = fbDates();
       var out = await invoke('dialpad_call_feedback', {
         // Ask for everything and filter client-side — otherwise flipping the
         // chip would cost a second full analysis of the same calls.
-        // 14 days is an OUTER BOUND, not a promise to read it all: it just
-        // stops the scan wandering into stale calls. Depth is what decides
-        // how much is actually analysed.
-        days_back: 14, sentiment: 'all',
+        // With no dates, 14 days is an OUTER BOUND — not a promise to read it
+        // all; depth decides how much is actually analysed. With dates, the
+        // range replaces it, and the END bound is what lets an older range
+        // return different calls instead of always the newest ones.
+        days_back: (d.from || d.to) ? undefined : 14,
+        started_after: d.from,
+        started_before: d.to,
+        sentiment: 'all',
         // The server drops a request that runs past ~30s, and this analysis is
         // roughly 0.85s per call: an uncapped window hit 33s and died with a
         // 500 that looked like a bug rather than a timeout. 25 lands near 22s.
@@ -942,7 +968,7 @@
       pos.forEach(function (i) { i._tone = 'positive'; });
       fbState.items = neg.concat(pos);
       fbState.analyzed = out && out.analyzed_calls;
-      fbState.cache[fbState.depth] = {
+      fbState.cache[fbCacheKey()] = {
         items: fbState.items, analyzed: fbState.analyzed, counts: (out && out.counts) || {}
       };
       var c = (out && out.counts) || {};
@@ -1250,7 +1276,7 @@
     // Already analysed this window? Show it. Otherwise say so plainly rather
     // than leaving the previous window's findings on screen under a new label,
     // which would be the wrong answer presented confidently.
-    var hit = fbState.cache[fbState.depth];
+    var hit = fbState.cache[fbCacheKey()];
     if (hit) {
       fbState.items = hit.items;
       fbState.analyzed = hit.analyzed;
@@ -1277,6 +1303,27 @@
     // re-run. Another run is another LLM pass over the whole window, so
     // Analyse stays the only thing that spends money.
     if (fbState.loaded && !fbState.loading) fbRender();
+  });
+  // A changed date range must not leave the previous range's findings on
+  // screen: they would be read as the answer for the new dates.
+  function fbDatesChanged() {
+    var hit = fbState.cache[fbCacheKey()];
+    if (hit) {
+      fbState.items = hit.items; fbState.analyzed = hit.analyzed; fbState.loaded = true;
+      var c = hit.counts || {};
+      $('#fbCounts').textContent = (c.negative || 0) + ' negative · ' + (c.positive || 0) +
+        ' positive · ' + (c.neutral || 0) + ' neutral · newest ' + (hit.analyzed || 0) + ' calls';
+      $('#fbCounts').style.display = '';
+    } else {
+      fbState.items = []; fbState.loaded = false;
+      $('#fbCounts').style.display = 'none';
+    }
+    fbRender();
+  }
+  $('#fbFrom').addEventListener('change', fbDatesChanged);
+  $('#fbTo').addEventListener('change', fbDatesChanged);
+  $('#fbClearDates').addEventListener('click', function () {
+    $('#fbFrom').value = ''; $('#fbTo').value = ''; fbDatesChanged();
   });
   $('#fbRun').addEventListener('click', fbRun);
 
