@@ -112,7 +112,19 @@
   }
   .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
 
-  .fb-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+  /* Grouped and labelled: two chip rows with no captions read as one long
+     row of unrelated buttons, and nothing says what either one controls. */
+  .fb-controls { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+  .fb-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .fb-label {
+    flex: 0 0 68px; font-size: 11px; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--ink-2);
+  }
+  .fb-run { align-self: flex-start; }
+  .fb-counts {
+    margin: 2px 0 0; font-size: 12.5px; color: var(--ink-2);
+    font-variant-numeric: tabular-nums;
+  }
   .fb-row { align-items: flex-start; gap: 10px; }
   /* A severity stripe rather than a coloured card: the list is scanned, and a
      dot reads at a glance without turning every row into a warning banner. */
@@ -122,8 +134,8 @@
   .fb-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; text-align: left; }
   .fb-top { display: flex; gap: 8px; align-items: baseline; font-weight: 600; font-size: 13px; }
   .fb-when { font-weight: 400; font-size: 11.5px; color: var(--ink-2); }
-  .fb-text { font-size: 13px; line-height: 1.45; }
-  .fb-why { font-size: 11.5px; color: var(--ink-2); line-height: 1.4; }
+  .fb-text { font-size: 13.5px; line-height: 1.5; color: var(--ink); }
+  .fb-why { font-size: 12px; color: var(--ink-2); line-height: 1.45; }
 
   .chip {
     padding: 5px 11px; font-size: 12.5px; font-weight: 600; border-radius: 999px;
@@ -267,19 +279,25 @@
              them: seconds of work and real cost per run. So it is never
              automatic — the window is picked, then Analyse is pressed. -->
         <div class="fb-controls" id="fbControls" style="display:none">
+          <div class="fb-group">
+            <span class="fb-label">Period</span>
           <div class="chips" id="fbDays">
             <button class="chip" data-d="1" aria-pressed="false">Today</button>
             <button class="chip" data-d="3" aria-pressed="true">3 days</button>
             <button class="chip" data-d="7" aria-pressed="false">7 days</button>
             <button class="chip" data-d="14" aria-pressed="false">14 days</button>
           </div>
+          </div>
+          <div class="fb-group">
+            <span class="fb-label">Sentiment</span>
           <div class="chips" id="fbSent">
             <button class="chip" data-s="negative" aria-pressed="true">Negative</button>
             <button class="chip" data-s="positive" aria-pressed="false">Positive</button>
             <button class="chip" data-s="all" aria-pressed="false">All</button>
           </div>
-          <button class="apply" id="fbRun">Analyse</button>
-          <p id="fbCounts" class="range-note" style="display:none"></p>
+          </div>
+          <button class="apply fb-run" id="fbRun">Analyse calls</button>
+          <p id="fbCounts" class="fb-counts" style="display:none"></p>
         </div>
         <div class="toolbar">
           <input type="search" id="q" placeholder="Search name or number…" aria-label="Search calls" />
@@ -936,8 +954,13 @@
       ? 'What customers said on the phone, and the call that proves it'
       : 'Calls, transcripts and recordings';
     $('#fbControls').style.display = isFb ? '' : 'none';
-    ['#q', '#dirChips'].forEach(function (sel) {
-      var el = $(sel); if (el) el.style.display = isFb ? 'none' : '';
+    // Every history-only control, not a subset. A leftover date range with an
+    // Apply button next to a feedback list is worse than clutter: it looks like
+    // it filters the list, and pressing it silently reloads the OTHER tab's
+    // data underneath — which is exactly what it did.
+    ['.filters', '.toolbar', '#rangeNote', '#more'].forEach(function (sel) {
+      var el = document.querySelector(sel);
+      if (el) el.style.display = isFb ? 'none' : '';
     });
     if (isFb) fbRender(); else renderList();
   }
