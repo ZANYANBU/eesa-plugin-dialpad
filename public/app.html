@@ -120,7 +120,14 @@
     flex: 0 0 68px; font-size: 11px; font-weight: 700; letter-spacing: .06em;
     text-transform: uppercase; color: var(--ink-2);
   }
-  .fb-run { align-self: flex-start; }
+  /* Deliberately NOT the blue of Apply: that button filters a list, this one
+     spends money on an analysis. Two different kinds of action should not wear
+     the same colour. */
+  .fb-run {
+    align-self: flex-start; background: #0f766e; border-color: #0f766e; color: #fff;
+  }
+  .fb-run:hover { background: #115e56; border-color: #115e56; }
+  .fb-run:disabled { background: #9ca3af; border-color: #9ca3af; }
   .fb-counts {
     margin: 2px 0 0; font-size: 12.5px; color: var(--ink-2);
     font-variant-numeric: tabular-nums;
@@ -852,7 +859,10 @@
   // the signed-in user. It reads each call's AI recap and transcript and
   // classifies sentiment, so it is slow and costs money — hence a button, and
   // never a poll.
-  var fbState = { days: 3, sentiment: 'negative', items: [], loaded: false, loading: false };
+  // `cache` holds one analysed result per window. Flipping 3 days -> 7 days ->
+  // 3 days again used to re-run the whole analysis for a window already paid
+  // for; now only a window never analysed costs anything.
+  var fbState = { days: 3, sentiment: 'negative', items: [], loaded: false, loading: false, cache: {} };
 
   function fbRender() {
     var rows = $('#rows');
@@ -925,6 +935,9 @@
       pos.forEach(function (i) { i._tone = 'positive'; });
       fbState.items = neg.concat(pos);
       fbState.analyzed = out && out.analyzed_calls;
+      fbState.cache[fbState.days] = {
+        items: fbState.items, analyzed: fbState.analyzed, counts: (out && out.counts) || {}
+      };
       var c = (out && out.counts) || {};
       // Name the scope actually scanned. Claiming the whole window when only
       // the newest 25 calls were read is the kind of quiet overstatement that
@@ -1228,6 +1241,25 @@
     Array.prototype.forEach.call(this.querySelectorAll('.chip'), function (x) {
       x.setAttribute('aria-pressed', String(x === b));
     });
+    // Already analysed this window? Show it. Otherwise say so plainly rather
+    // than leaving the previous window's findings on screen under a new label,
+    // which would be the wrong answer presented confidently.
+    var hit = fbState.cache[fbState.days];
+    if (hit) {
+      fbState.items = hit.items;
+      fbState.analyzed = hit.analyzed;
+      fbState.loaded = true;
+      var c = hit.counts || {};
+      $('#fbCounts').textContent = (c.negative || 0) + ' negative · ' + (c.positive || 0) +
+        ' positive · ' + (c.neutral || 0) + ' neutral · newest ' + (hit.analyzed || 0) +
+        ' calls in ' + fbState.days + 'd';
+      $('#fbCounts').style.display = '';
+    } else {
+      fbState.items = [];
+      fbState.loaded = false;
+      $('#fbCounts').style.display = 'none';
+    }
+    fbRender();
   });
   $('#fbSent').addEventListener('click', function (e) {
     var b = e.target.closest ? e.target.closest('.chip') : null;
