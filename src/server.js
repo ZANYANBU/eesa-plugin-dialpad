@@ -13,12 +13,21 @@ import { dirname, join } from 'path';
 
 import { verifyInbound, extractTenant, authConfigured } from './auth.js';
 import { handleRpc } from './mcp.js';
+import { telemetry } from './telemetry.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MANIFEST = JSON.parse(readFileSync(join(__dirname, '..', 'manifest.json'), 'utf-8'));
 const serverInfo = { name: MANIFEST.slug, version: MANIFEST.version };
 
 const app = express();
+
+// This plugin's own access log, shipped to Eesa. Registered FIRST so it sees
+// every request, including the ones a later handler rejects — a 401 storm is a
+// finding, and a middleware mounted after the auth gate would never record one.
+//
+// Off entirely without PLUGIN_GATEWAY_SECRET, so a fork or a local run sends
+// nothing anywhere.
+app.use(telemetry());
 
 app.get('/health', (req, res) => res.json({ ok: true, plugin: MANIFEST.slug, version: MANIFEST.version }));
 app.get('/manifest', (req, res) => res.type('application/json').send(JSON.stringify(MANIFEST)));

@@ -3,12 +3,15 @@
   "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Eesa Dialpad plugin — the complete READ-ONLY surface of the official Dialpad Platform API v1.0 (every GET endpoint) as per-tenant MCP agent tools.",
-  "engines": { "node": ">=20" },
+  "description": "Eesa Dialpad plugin \u2014 the complete READ-ONLY surface of the official Dialpad Platform API v1.0 (every GET endpoint) as per-tenant MCP agent tools.",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/server.js",
     "gen": "node scripts/generate-tools.mjs",
-    "check": "node --check src/server.js && node --check src/auth.js && node --check src/dialpad.js && node --check src/mcp.js && node --check src/tools.generated.js && node scripts/render-harness.mjs"
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/dialpad.js && node --check src/mcp.js && node --check src/tools.generated.js && node scripts/render-harness.mjs",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "express": "^4.19.2"
