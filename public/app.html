@@ -255,6 +255,8 @@
   .state { display: grid; place-items: center; padding: 56px 24px; text-align: center; color: var(--ink-3); gap: 12px; }
   .state svg { width: 34px; height: 34px; opacity: .6; }
   .state .msg { max-width: 36ch; font-size: 14px; }
+  .fb-elapsed { display: inline-block; margin-top: 6px; font-size: 12.5px; color: var(--muted, #667085); font-variant-numeric: tabular-nums; }
+  .fb-run[disabled] { opacity: .6; cursor: progress; }
   .spin { width: 26px; height: 26px; border: 2.5px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: sp .7s linear infinite; }
   @keyframes sp { to { transform: rotate(360deg); } }
   .skel { height: 62px; border-bottom: 1px solid var(--line); background: linear-gradient(90deg, var(--sunk), var(--surface), var(--sunk)); background-size: 200% 100%; animation: sh 1.2s infinite; }
@@ -892,6 +894,23 @@
   // for; now only a window never analysed costs anything.
   var fbState = { depth: 25, sentiment: 'negative', items: [], loaded: false, loading: false, cache: {} };
 
+  /** Open the pickers on the window Analyse would use anyway.
+   *
+   *  Empty boxes reading dd/mm/yyyy said nothing about what pressing Analyse
+   *  would do — it quietly used the last 14 days — so the control and the
+   *  behaviour disagreed. Showing the dates makes the default visible and
+   *  editable, and they are still cleared with Clear. */
+  function fbSeedDates() {
+    var to = $('#fbTo'), from = $('#fbFrom');
+    if (!to || !from || from.value || to.value) return;
+    var iso = function (d) {
+      return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    };
+    var now = new Date();
+    to.value = iso(now);
+    from.value = iso(new Date(now.getTime() - 13 * 86400000));
+  }
+
   // Dates as epoch ms. `To` covers the WHOLE chosen day — a plain date parses
   // to midnight, so picking the same day for From and To would otherwise
   // select a zero-length window and quietly return nothing.
@@ -902,6 +921,32 @@
       to: t ? Date.parse(t + 'T23:59:59') : undefined
     };
   }
+  /** The window as a person would say it, for the counts line.
+   *
+   *  "17 calls" with no period is a number nobody can act on: it reads as the
+   *  whole history to one person and as today to another. */
+  function fbWindowLabel() {
+    var f = ($('#fbFrom') || {}).value, t = ($('#fbTo') || {}).value;
+    if (!f && !t) return 'the last 14 days';
+    var say = function (v) {
+      var d = new Date(v + 'T12:00:00');
+      return isNaN(d) ? v : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    };
+    if (f && t) return f === t ? say(f) : say(f) + ' – ' + say(t);
+    return f ? 'since ' + say(f) : 'up to ' + say(t);
+  }
+
+  /** The counts line. Written once because three call sites composed it by
+   *  hand, and a fourth would have worded it differently again. */
+  function fbShowCounts(counts, analyzed) {
+    var c = counts || {};
+    $('#fbCounts').textContent =
+      (c.negative || 0) + ' negative · ' + (c.positive || 0) + ' positive · ' +
+      (c.neutral || 0) + ' neutral — newest ' + (analyzed || 0) +
+      ' calls in ' + fbWindowLabel();
+    $('#fbCounts').style.display = '';
+  }
+
   function fbCacheKey() {
     var d = fbDates();
     return fbState.depth + ':' + (d.from || '') + ':' + (d.to || '');
@@ -910,8 +955,14 @@
   function fbRender() {
     var rows = $('#rows');
     if (fbState.loading) {
+      // This runs at roughly 0.85s per call, so twenty-odd seconds of a static
+      // "reading…" reads as a hang. Say how long it should take and count up,
+      // so waiting is a decision rather than a guess.
+      var est = Math.round(fbState.depth * 0.85);
       rows.innerHTML = '<div class="state"><div class="spin"></div>' +
-        '<div class="msg">Reading calls and their transcripts…</div></div>';
+        '<div class="msg">Reading ' + fbState.depth + ' calls and their transcripts…<br>' +
+        '<span class="fb-elapsed" id="fbElapsed">about ' + est + 's</span></div></div>';
+      fbTick();
       return;
     }
     if (!fbState.loaded) {
@@ -954,9 +1005,36 @@
     });
   }
 
+  /** Count up while the analysis runs. Cleared by whoever ends the run. */
+  var fbTimer = null;
+  function fbTick() {
+    if (fbTimer) return;
+    var started = Date.now(), est = Math.round(fbState.depth * 0.85);
+    fbTimer = setInterval(function () {
+      var el = $('#fbElapsed');
+      if (!el || !fbState.loading) { fbStopTick(); return; }
+      var secs = Math.round((Date.now() - started) / 1000);
+      // Past the estimate, stop quoting it: an estimate that keeps being wrong
+      // is worse than none at all.
+      el.textContent = secs < est
+        ? secs + 's of about ' + est + 's'
+        : secs + 's — longer than usual, still going';
+    }, 1000);
+  }
+  function fbStopTick() {
+    if (fbTimer) { clearInterval(fbTimer); fbTimer = null; }
+  }
+  function fbBusy(on) {
+    var b = $('#fbRun');
+    if (!b) return;
+    b.disabled = !!on;
+    b.textContent = on ? 'Analysing…' : 'Analyse calls';
+  }
+
   async function fbRun() {
     if (fbState.loading) return;
     fbState.loading = true; fbState.loaded = true;
+    fbBusy(true);
     $('#fbCounts').style.display = 'none';
     fbRender();
     try {
@@ -993,17 +1071,17 @@
       // Name the scope actually scanned. Claiming the whole window when only
       // the newest 25 calls were read is the kind of quiet overstatement that
       // makes a dashboard untrustworthy.
-      $('#fbCounts').textContent = (c.negative || 0) + ' negative · ' + (c.positive || 0) +
-        ' positive · ' + (c.neutral || 0) + ' neutral · newest ' + (fbState.analyzed || 0) + ' calls';
-      $('#fbCounts').style.display = '';
+      fbShowCounts(c, fbState.analyzed);
     } catch (e) {
       fbState.items = []; fbState.analyzed = null;
       fbState.loading = false;
+      fbStopTick(); fbBusy(false);
       $('#rows').innerHTML = '<div class="state"><div class="msg">' +
         esc(e.message || 'Could not analyse calls.') + '</div></div>';
       return;
     }
     fbState.loading = false;
+    fbStopTick(); fbBusy(false);
     fbRender();
   }
 
@@ -1025,7 +1103,7 @@
       var el = document.querySelector(sel);
       if (el) el.style.display = isFb ? 'none' : '';
     });
-    if (isFb) fbRender(); else renderList();
+    if (isFb) { fbSeedDates(); fbRender(); } else renderList();
   }
 
   async function openCall(id) {
@@ -1294,10 +1372,7 @@
       fbState.items = hit.items;
       fbState.analyzed = hit.analyzed;
       fbState.loaded = true;
-      var c = hit.counts || {};
-      $('#fbCounts').textContent = (c.negative || 0) + ' negative · ' + (c.positive || 0) +
-        ' positive · ' + (c.neutral || 0) + ' neutral · newest ' + (hit.analyzed || 0) + ' calls';
-      $('#fbCounts').style.display = '';
+      fbShowCounts(hit.counts, hit.analyzed);
     } else {
       fbState.items = [];
       fbState.loaded = false;
@@ -1323,10 +1398,7 @@
     var hit = fbState.cache[fbCacheKey()];
     if (hit) {
       fbState.items = hit.items; fbState.analyzed = hit.analyzed; fbState.loaded = true;
-      var c = hit.counts || {};
-      $('#fbCounts').textContent = (c.negative || 0) + ' negative · ' + (c.positive || 0) +
-        ' positive · ' + (c.neutral || 0) + ' neutral · newest ' + (hit.analyzed || 0) + ' calls';
-      $('#fbCounts').style.display = '';
+      fbShowCounts(hit.counts, hit.analyzed);
     } else {
       fbState.items = []; fbState.loaded = false;
       $('#fbCounts').style.display = 'none';
