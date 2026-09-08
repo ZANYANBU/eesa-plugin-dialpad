@@ -236,6 +236,11 @@
   /* ── recording ─────────────────────────────────────────────────────── */
   .player { display: flex; flex-direction: column; gap: 10px; }
   .player audio { width: 100%; min-height: 44px; display: block; }
+  /* Download sits with the caption rather than above the player: the common
+     act is listening, and a second button competing with play made people
+     pause to choose between them. */
+  .playbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .playbar .note { margin: 0; }
   .pbtn { display: inline-flex; align-items: center; justify-content: center; gap: 9px;
           padding: 0 20px; min-height: 46px; border: 0; border-radius: 12px;
           background: var(--accent); color: #fff; font-size: 15px; font-weight: 600;
@@ -587,10 +592,23 @@
         });
         host.innerHTML = '';
         host.appendChild(audio);
-        var n = document.createElement('div');
+
+        // Download saves the blob already in the page rather than fetching
+        // again — the bytes are here, and a second round trip would mint a
+        // second share link for an admin recording.
+        var bar = document.createElement('div');
+        bar.className = 'playbar';
+        var dl = document.createElement('a');
+        dl.className = 'lnk';
+        dl.textContent = '⭳  Download';
+        dl.href = url;
+        dl.download = 'call-' + callId + '.mp3';
+        bar.appendChild(dl);
+        var n = document.createElement('span');
         n.className = 'note';
-        n.textContent = 'Streamed through Eesa — the recording never leaves your workspace’s account.';
-        host.appendChild(n);
+        n.textContent = 'Played through Eesa — the recording never leaves your workspace’s account.';
+        bar.appendChild(n);
+        host.appendChild(bar);
         try { await audio.play(); } catch (e) { /* autoplay may be blocked; controls are there */ }
       } catch (e) {
         btn.disabled = false;
@@ -1107,17 +1125,12 @@
       if (det) return '<div class="note">No recording is available for this call.</div>';
       return '';
     }
-    var streamable = recs.filter(function (r) { return r.streamable; });
-    if (streamable.length) {
-      return '<div class="player" id="recWrap">' +
-        '<button class="pbtn" id="recPlay">▶  Play recording</button>' +
-        '</div>';
-    }
-    // Only admin recordings: Dialpad refuses these to anything but a signed-in
-    // browser session, so there is nothing to play here and we say why rather
-    // than showing a player that cannot work.
+    // Every recording plays here now. Admin recordings used to be a link-out,
+    // because Dialpad refuses that URL to anything but a signed-in browser —
+    // the gateway fetches those through a short-lived share link instead, so
+    // the URL shape decides how the bytes are got, not whether you can listen.
     return '<div class="player" id="recWrap">' +
-      fallbackHtml(recs, 'Dialpad only serves this admin recording to a signed-in Dialpad session, so it can’t be played here.') +
+      '<button class="pbtn" id="recPlay">▶  Play recording</button>' +
       '</div>';
   }
 
