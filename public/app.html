@@ -927,12 +927,16 @@
    *  whole history to one person and as today to another. */
   function fbWindowLabel() {
     var f = ($('#fbFrom') || {}).value, t = ($('#fbTo') || {}).value;
-    if (!f && !t) return 'the last 14 days';
     var say = function (v) {
       var d = new Date(v + 'T12:00:00');
       return isNaN(d) ? v : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
     };
-    if (f && t) return f === t ? say(f) : say(f) + ' – ' + say(t);
+    // The preposition belongs to the phrase, not to the caller. Bolting a
+    // fixed "in " onto the front produced "3 calls in since Sep 1" for a
+    // one-sided range, which is the sort of thing that reads as a bug in the
+    // numbers rather than in the sentence.
+    if (!f && !t) return 'in the last 14 days';
+    if (f && t) return f === t ? 'on ' + say(f) : 'in ' + say(f) + ' – ' + say(t);
     return f ? 'since ' + say(f) : 'up to ' + say(t);
   }
 
@@ -943,7 +947,7 @@
     $('#fbCounts').textContent =
       (c.negative || 0) + ' negative · ' + (c.positive || 0) + ' positive · ' +
       (c.neutral || 0) + ' neutral — newest ' + (analyzed || 0) +
-      ' calls in ' + fbWindowLabel();
+      ' calls ' + fbWindowLabel();
     $('#fbCounts').style.display = '';
   }
 
